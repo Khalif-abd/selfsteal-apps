@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# selfsteal-apps — nginx front for Xray Reality "selfsteal" with multiple domains.
+# https://github.com/Khalif-abd/selfsteal-apps
+set -Eeuo pipefail
+
+SSA_SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+SSA_LIB="$(dirname "$SSA_SELF")"
+SSA_VERSION="$(cat "$SSA_LIB/VERSION" 2>/dev/null || echo dev)"
+SSA_REPO="${SSA_REPO:-Khalif-abd/selfsteal-apps}"
+SSA_BRANCH="${SSA_BRANCH:-main}"
+BIN_LINK="${SSA_BIN_LINK:-/usr/local/bin/selfsteal-apps}"
+
+# Re-exec as root so plain "selfsteal-apps" works too.
+if [[ $EUID -ne 0 ]]; then
+  if command -v sudo >/dev/null 2>&1; then exec sudo -E "$SSA_SELF" "$@"; fi
+  echo "Запустите от root." >&2; exit 1
+fi
+
+for _f in common config nginx certs domains xray adopt commands menu; do
+  # shellcheck disable=SC1090
+  source "$SSA_LIB/lib/$_f.sh"
+done
+unset _f
+
+trap 'err "Ошибка в строке $LINENO: $BASH_COMMAND"' ERR
+
+load_config
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  "" | menu)            main_menu ;;
+  install)              install_cmd "$@" ;;
+  adopt)                adopt_cmd "$@" ;;
+  domain | domains)     domain_cmd "$@" ;;
+  cert | certs)         cert_cmd "$@" ;;
+  status)               status_cmd ;;
+  logs)                 logs_cmd "$@" ;;
+  restart | apply)      restart_cmd ;;
+  down | stop)          down_cmd ;;
+  xray)                 xray_hint; check_xray_socket_access ;;
+  update | update-script) update_cmd ;;
+  uninstall)            uninstall_cmd "$@" ;;
+  version | -v | --version) version_cmd ;;
+  help | -h | --help)   help_cmd ;;
+  *) die "Неизвестная команда: $cmd. См.: selfsteal-apps help" ;;
+esac
