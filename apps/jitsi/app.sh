@@ -9,6 +9,7 @@
 
 jitsi_TITLE="Jitsi Meet"
 jitsi_DESC="видеоконференции (комнаты создают только пользователи)"
+jitsi_MEM_MB=1500
 
 J_REPO_URL="https://github.com/jitsi/docker-jitsi-meet.git"
 J_DIR="$APPS_DATA_DIR/jitsi"
@@ -66,15 +67,6 @@ _j_compose_supports_override() {
   patch="${patch%%[!0-9]*}"
   major="${major:-0}"; minor="${minor:-0}"; patch="${patch:-0}"
   (( major > 2 || (major == 2 && (minor > 24 || (minor == 24 && patch >= 4))) ))
-}
-
-_j_check_resources() {
-  local mem_kb
-  mem_kb="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
-  if (( mem_kb > 0 && mem_kb < 1800000 )); then
-    warn "RAM: $((mem_kb/1024)) МБ. Jitsi (Java JVB + jicofo) комфортно работает от ~2 ГБ."
-    confirm "Всё равно ставить?" y || die "Отменено."
-  fi
 }
 
 _j_host_tz() {
@@ -254,7 +246,7 @@ jitsi_install() {
 
   _j_compose_supports_override || die "Нужен Docker Compose v2.24.4+ (сейчас: $(docker compose version --short))."
   have git || pkg_install git || die "git обязателен."
-  (( reinstall )) || _j_check_resources
+  (( reinstall )) || app_check_memory jitsi
 
   J_IMPORT_ENV=""; J_MIGRATE=0
   if (( ! reinstall && ! no_migrate )) && _j_old_present; then
@@ -271,6 +263,7 @@ jitsi_install() {
   fi
   J_DOMAIN="$(lower "$J_DOMAIN")"
   valid_domain "$J_DOMAIN" || die "Некорректный домен: '$J_DOMAIN'"
+  _app_domain_conflict jitsi "$J_DOMAIN"
 
   if [[ -n "$auth_arg" ]]; then J_AUTH="$auth_arg"
   elif (( ! reinstall )) && [[ -z "$J_IMPORT_ENV" ]] && is_interactive; then
@@ -376,6 +369,8 @@ jitsi_status() {
   echo
   _j_compose ps --format 'table {{.Service}}\t{{.Status}}' 2>/dev/null || true
 }
+
+jitsi_brief() { _j_load; printf '%s' "$J_DOMAIN"; }
 
 jitsi_logs() {
   jitsi_installed || die "Jitsi не установлен."

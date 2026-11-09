@@ -88,6 +88,31 @@ sudo selfsteal-apps app jitsi uninstall         # домен вернётся к
 переносятся `.env` (секреты), учётки Prosody, домен и порты; старый стек `/opt/jitsi` останавливается
 прямо перед стартом нового, его файлы остаются.
 
+### Nextcloud
+
+```bash
+sudo selfsteal-apps app nextcloud install --domain cloud.example.com     # админ и пароль выведутся в конце
+sudo selfsteal-apps app nextcloud user add ivan | passwd <имя> | del <имя> | list
+sudo selfsteal-apps app nextcloud status | logs [app|db|redis|cron] | restart
+sudo selfsteal-apps app nextcloud update        # патчи + мажорные версии по одной до текущего stable
+sudo selfsteal-apps app nextcloud occ <...>     # любая команда occ
+sudo selfsteal-apps app nextcloud uninstall     # удаляет и данные (тома); домен -> заглушка 403
+```
+
+- Официальный образ `nextcloud:<мажор>-apache` + MariaDB 11.8 + Redis + контейнер `cron` для фоновых задач.
+- На домене — страница входа, **регистрации нет**. Загрузка файлов — до **100 МБ**.
+- Мажорная версия фиксируется при установке (текущая `stable`). Nextcloud умеет обновляться только на одну
+  мажорную версию за раз — `update` проходит их по очереди.
+- Web — `127.0.0.1:8081` (если занят — берётся следующий свободный), реальный IP клиента доходит до Nextcloud
+  (защита от перебора работает по нему). Нужно ~700 МБ RAM.
+- Данные — в docker-томах проекта `ssa-nextcloud`, настройки — `/opt/selfsteal-apps/apps/nextcloud/`.
+
+### Несколько приложений на одной ноде
+
+Можно: каждое на своём домене и своём порту `127.0.0.1`. Один домен — одно приложение.
+Перед установкой скрипт проверяет свободную память с учётом уже запущенного, `status` показывает все приложения
+и сколько памяти они занимают.
+
 ## Перенос с nginx-selfsteal (DigneZzZ) / selfsteal-jitsi
 
 ```bash
@@ -181,7 +206,7 @@ Debian/Ubuntu (или другой Linux с systemd/cron), root, Docker + Compos
 
 ## Планы
 
-Nextcloud, Matrix + Element как модули `apps/<name>/`, центральная раздача сертификатов на ноды,
+Matrix + Element как модуль `apps/<name>/`, центральная раздача сертификатов на ноды,
 relay-режим (свой 443, маршрутизация по SNI / секретным путям на зарубежную ноду).
 
 ## Лицензия

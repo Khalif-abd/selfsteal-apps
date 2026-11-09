@@ -40,6 +40,59 @@ app_desc()  { local v="${1}_DESC";  printf '%s' "${!v:-}"; }
 
 app_installed() { app_has "$1" installed && "${1}_installed"; }
 
+# Free RAM check before installing an app (<name>_MEM_MB = what it needs).
+app_check_memory() {
+  local a="$1" v need avail total
+  v="${a}_MEM_MB"; need="${!v:-0}"
+  (( need > 0 )) || return 0
+  avail="$(awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)"
+  total="$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)"
+  (( avail > 0 )) || return 0
+  if (( avail < need + 256 )); then
+    warn "$(app_title "$a") нужно ~${need} МБ RAM, а свободно ${avail} из ${total} МБ (с учётом уже запущенного)."
+    local a2 others=""
+    for a2 in $(available_apps); do [[ "$a2" != "$a" ]] && app_installed "$a2" && others+="$(app_title "$a2") "; done
+    [[ -n "$others" ]] && info "Уже установлены: $others"
+    confirm "Всё равно ставить?" n || die "Отменено."
+  else
+    info "RAM: свободно ${avail} МБ, $(app_title "$a") нужно ~${need} МБ — ок."
+  fi
+}
+
+# One domain = one app.
+_app_domain_conflict() {
+  local a="$1" d="$2" cur
+  domain_exists "$d" || return 0
+  cur="$(_domain_field "$d" APP)"
+  case "$cur" in
+    stub|proxy|"$a"|"") return 0 ;;
+    *) die "Домен $d уже занят приложением $(app_title "$cur"). Выберите другой домен." ;;
+  esac
+}
+
+# Memory used by an app's compose project, in MiB.
+app_mem_usage() {
+  docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' 2>/dev/null | awk -v p="ssa-$1-" '
+    index($1, p) == 1 {
+      v = $2; u = v; gsub(/[0-9.]/, "", u); gsub(/[^0-9.]/, "", v)
+      if (u == "GiB") v *= 1024; else if (u == "KiB") v /= 1024; else if (u == "B") v /= 1048576
+      s += v
+    }
+    END { printf "%d", s }'
+}
+
+apps_status_brief() {
+  local a any=0 d
+  for a in $(available_apps); do
+    app_installed "$a" || continue
+    (( any )) || title "Приложения"
+    any=1
+    d=""; app_has "$a" brief && d="$("${a}_brief")"
+    printf ' %s%-14s%s %-32s RAM: ~%s МБ\n' "$C_BOLD" "$(app_title "$a")" "$C_RESET" "${d:+https://$d}" "$(app_mem_usage "$a")"
+  done
+  return 0
+}
+
 # Bind a domain to an app: creates the domain (with certificate) if needed.
 domain_ensure() {
   local d="$1" app="$2" upstream="$3"

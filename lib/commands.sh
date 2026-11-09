@@ -106,6 +106,7 @@ status_cmd() {
     printf ' Автопродление:  %sне настроено%s\n' "$C_YELLOW" "$C_RESET"
   fi
   domain_list
+  apps_status_brief
 }
 
 logs_cmd() {
@@ -246,6 +247,10 @@ ${C_BOLD}Приложения${C_RESET}
   app jitsi install [--domain D] [--auth|--no-auth] [--http-port 8000] [--jvb-port 10000]
   app jitsi status | logs [web|prosody|jicofo|jvb] | update [--force] | restart | uninstall
   app jitsi user list | add <имя> [пароль] | passwd <имя> [пароль] | del <имя>
+  app nextcloud install [--domain D] [--admin NAME] [--http-port 8081]
+  app nextcloud status | logs [app|db|redis|cron] | update | restart | uninstall
+  app nextcloud user list | add <имя> [пароль] | passwd <имя> [пароль] | del <имя>
+  app nextcloud occ <аргументы>              любая команда occ
 
 ${C_BOLD}Сертификаты${C_RESET}
   cert list                                  все сертификаты и какие домены их используют
