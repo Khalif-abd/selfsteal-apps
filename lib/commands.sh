@@ -167,6 +167,14 @@ uninstall_cmd() {
   warn "Будут удалены: контейнер $CONTAINER, $DATA_DIR, $CONF_DIR (вкл. сертификаты и acme.sh)."
   warn "Xray / remnanode не трогаются. Reality-fallback перестанет отвечать, пока не поставите другой dest."
   confirm "Удалить?" n || return 0
+  local a
+  for a in $(available_apps); do
+    if app_installed "$a"; then
+      warn "Установлено приложение $(app_title "$a") — сначала удаляю его."
+      "${a}_uninstall"
+      app_installed "$a" && die "Удаление прервано: $(app_title "$a") остался установлен."
+    fi
+  done
   if [[ -f "$NGINX_DIR/docker-compose.yml" ]]; then compose down >/dev/null 2>&1 || true; fi
   if acme_installed; then acme --uninstall >/dev/null 2>&1 || true; fi
   rm -rf "${DATA_DIR:?}" "${CONF_DIR:?}"
@@ -216,6 +224,12 @@ ${C_BOLD}Домены${C_RESET}
                      [--cert fullchain.pem --key privkey.pem] [--no-cert]
   domain set <домен> --page P | --proxy URL
   domain remove <домен>
+
+${C_BOLD}Приложения${C_RESET}
+  app list
+  app jitsi install [--domain D] [--auth|--no-auth] [--http-port 8000] [--jvb-port 10000]
+  app jitsi status | logs [web|prosody|jicofo|jvb] | update [--force] | restart | uninstall
+  app jitsi user list | add <имя> [пароль] | passwd <имя> [пароль] | del <имя>
 
 ${C_BOLD}Сертификаты${C_RESET}
   cert status | issue <домен> | reissue <домен> | renew | manual <домен> <crt> <key>

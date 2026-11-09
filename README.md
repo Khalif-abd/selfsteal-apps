@@ -55,6 +55,39 @@ sudo selfsteal-apps status | logs | restart | down | xray | update | uninstall [
 
 Заглушки: `403`, `404`, `502`, `503` (стандартные страницы ошибок nginx, без версии) и `welcome` («Welcome to nginx!»).
 
+## Приложения
+
+Приложение ставится на домен: nginx проксирует его по TLS, сам сервис слушает только `127.0.0.1`.
+Меню → «Приложения», или:
+
+```bash
+sudo selfsteal-apps app list
+```
+
+### Jitsi Meet
+
+```bash
+sudo selfsteal-apps app jitsi install --domain meet.example.com          # по умолчанию --auth
+sudo selfsteal-apps app jitsi user add admin                             # пароль сгенерируется
+sudo selfsteal-apps app jitsi user list | passwd <имя> | del <имя>
+sudo selfsteal-apps app jitsi status | logs [web|prosody|jicofo|jvb] | restart
+sudo selfsteal-apps app jitsi update            # на новейший stable-* релиз docker-jitsi-meet
+sudo selfsteal-apps app jitsi uninstall         # домен вернётся к заглушке 403
+```
+
+- Сайт открывается всем, а **комнаты создают только пользователи** (`AUTH_TYPE=internal`), гости входят по ссылке.
+  `--no-auth` — открытый режим.
+- Релиз — последний тег `stable-*` [docker-jitsi-meet](https://github.com/jitsi/docker-jitsi-meet); compose и образы
+  берутся из одного тега. Секреты генерируются один раз и не меняются при обновлениях.
+- Web — `127.0.0.1:8000` (`--http-port`), медиа — **UDP/10000** (`--jvb-port`), его нужно открыть в firewall
+  (ufw скрипт предложит открыть сам; внешний firewall хостера — вручную).
+- IPv4-only (`ENABLE_IPV6=0`) — работает на хостах с выключенным IPv6. Нужно ~2 ГБ RAM и Docker Compose 2.24.4+.
+- Данные: `/opt/selfsteal-apps/apps/jitsi/` (`src/` — checkout, `config/` — конфиг и учётки).
+
+**Перенос с selfsteal-jitsi** — автоматически при `app jitsi install` (или сразу после `adopt`):
+переносятся `.env` (секреты), учётки Prosody, домен и порты; старый стек `/opt/jitsi` останавливается
+прямо перед стартом нового, его файлы остаются.
+
 ## Перенос с nginx-selfsteal (DigneZzZ) / selfsteal-jitsi
 
 ```bash
@@ -62,7 +95,7 @@ sudo selfsteal-apps adopt
 ```
 
 - читает домен, сокет/порт, `proxy_protocol` и сертификат из `/opt/nginx-selfsteal/conf.d/selfsteal.conf`;
-- если стоит `selfsteal-jitsi` — домен проксируется на Jitsi (`127.0.0.1:8000`), Jitsi не трогается;
+- если стоит `selfsteal-jitsi` — домен сразу проксируется на Jitsi, затем скрипт предлагает перенести Jitsi в модуль `app jitsi`;
 - останавливает контейнер `nginx-selfsteal` (файлы остаются), запускает свой на том же сокете — Xray/remnanode менять не нужно;
 - отключает в cron старое задание `acme-renew.sh` (оно ставит iptables-редирект 443 на время продления);
 - перевыпускает сертификат своим acme.sh; если не вышло — продолжает работать старый.
@@ -101,6 +134,7 @@ sudo selfsteal-apps adopt
 | `/etc/selfsteal-apps/config.env` | настройки (режим, порты, email) |
 | `/etc/selfsteal-apps/domains/*.env` | по файлу на домен |
 | `/etc/selfsteal-apps/acme/` | acme.sh и его данные |
+| `/opt/selfsteal-apps/apps/<имя>/` | данные приложений |
 | `/opt/selfsteal-apps/nginx/` | docker-compose, nginx.conf, `conf.d/sites/<домен>.conf`, `ssl/<домен>/` |
 | `/var/log/selfsteal-apps.log` | журнал действий скрипта |
 
@@ -112,7 +146,7 @@ Debian/Ubuntu (или другой Linux с systemd/cron), root, Docker + Compos
 
 ## Планы
 
-Приложения (Jitsi, Nextcloud, Matrix + Element) как модули `apps/<name>/`, wildcard через DNS-01,
+Nextcloud, Matrix + Element как модули `apps/<name>/`, wildcard через DNS-01,
 relay-режим (свой 443, маршрутизация по SNI / секретным путям на зарубежную ноду).
 
 ## Лицензия

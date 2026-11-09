@@ -106,4 +106,9 @@ _adopt_disable_old_cron() {
 install_cli_hint_after_adopt() {
   [[ -f "$OLD_JITSI_STATE" ]] || return 0
   info "Jitsi (selfsteal-jitsi) продолжает работать как есть; домен проксируется на него."
+  if app_known jitsi && confirm "Перенести Jitsi в модуль selfsteal-apps (обновления, пользователи из меню)?" y; then
+    jitsi_install --domain "$DOMAIN"
+  else
+    info "Позже: selfsteal-apps app jitsi install"
+  fi
 }

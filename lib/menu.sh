@@ -63,6 +63,48 @@ _menu_service() {
   done
 }
 
+_menu_app() {
+  local a="$1"
+  while :; do
+    _menu_header
+    ( "${a}_status" ) 2>/dev/null || true
+    echo
+    if app_installed "$a"; then
+      printf '  1) Переустановить / изменить настройки\n  2) Обновить до последней стабильной версии\n  3) Логи (Ctrl+C — выход)\n  4) Удалить\n'
+      app_has "$a" menu_extra && "${a}_menu_extra"
+    else
+      printf '  1) Установить\n'
+    fi
+    printf '  0) Назад\n\n'
+    local c; read -r -p "Выбор: " c || return 0
+    case "$c" in
+      0|"") return 0 ;;
+      1) _menu_run "${a}_install" ;;
+      2) app_installed "$a" && _menu_run "${a}_update" ;;
+      3) app_installed "$a" && { ( "${a}_logs" ) || true; } ;;
+      4) app_installed "$a" && _menu_run "${a}_uninstall" ;;
+      *) if app_installed "$a" && app_has "$a" menu_action; then _menu_run "${a}_menu_action" "$c"; fi ;;
+    esac
+  done
+}
+
+_menu_apps() {
+  while :; do
+    _menu_header
+    app_list
+    echo
+    local apps i=1 a
+    mapfile -t apps < <(available_apps)
+    for a in "${apps[@]}"; do printf '  %d) %s\n' "$i" "$(app_title "$a")"; i=$((i+1)); done
+    printf '  0) Назад\n\n'
+    local c; read -r -p "Выбор: " c || return 0
+    [[ "$c" == 0 || -z "$c" ]] && return 0
+    if [[ "$c" =~ ^[0-9]+$ ]] && (( c >= 1 && c <= ${#apps[@]} )); then
+      _menu_app "${apps[$((c-1))]}"
+    fi
+  done
+}
+
 main_menu() {
   is_interactive || { help_cmd; return 0; }
   while :; do
@@ -82,14 +124,15 @@ main_menu() {
       esac
       continue
     fi
-    printf '  1) Статус\n  2) Домены\n  3) Сертификаты\n  4) Настройки для Xray / Remnawave\n  5) Сервис (перезапуск, логи)\n  8) Удалить\n  9) Обновить скрипт\n  0) Выход\n\n'
+    printf '  1) Статус\n  2) Домены\n  3) Приложения (Jitsi, ...)\n  4) Сертификаты\n  5) Настройки для Xray / Remnawave\n  6) Сервис (перезапуск, логи)\n  8) Удалить\n  9) Обновить скрипт\n  0) Выход\n\n'
     local c; read -r -p "Выбор: " c || return 0
     case "$c" in
       1) _menu_run status_cmd ;;
       2) _menu_domains ;;
-      3) _menu_certs ;;
-      4) _menu_run xray_hint ;;
-      5) _menu_service ;;
+      3) _menu_apps ;;
+      4) _menu_certs ;;
+      5) _menu_run xray_hint ;;
+      6) _menu_service ;;
       8) _menu_run uninstall_cmd ;;
       9) _menu_run update_cmd ;;
       0|q|"") return 0 ;;

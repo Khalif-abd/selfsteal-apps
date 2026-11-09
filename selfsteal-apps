@@ -16,11 +16,12 @@ if [[ $EUID -ne 0 ]]; then
   echo "Запустите от root." >&2; exit 1
 fi
 
-for _f in common config nginx certs domains xray adopt commands menu; do
+for _f in common config nginx certs domains xray adopt apps commands menu; do
   # shellcheck disable=SC1090
   source "$SSA_LIB/lib/$_f.sh"
 done
 unset _f
+load_app_plugins
 
 trap 'err "Ошибка в строке $LINENO: $BASH_COMMAND"' ERR
 
@@ -33,6 +34,7 @@ case "$cmd" in
   adopt)                adopt_cmd "$@" ;;
   domain | domains)     domain_cmd "$@" ;;
   cert | certs)         cert_cmd "$@" ;;
+  app | apps)           app_cmd "$@" ;;
   status)               status_cmd ;;
   logs)                 logs_cmd "$@" ;;
   restart | apply)      restart_cmd ;;

@@ -195,17 +195,14 @@ _proxy_locations() {
 EOF
 }
 
-# App plugins: apps/<name>/app.sh may define app_nginx_locations (uses DOMAIN/UPSTREAM).
+# App plugins (apps/<name>/app.sh) define <name>_nginx_locations (uses DOMAIN/UPSTREAM).
 site_locations() {
   case "$APP" in
     stub)  _stub_locations ;;
     proxy) _proxy_locations ;;
     *)
-      local plugin="$SSA_LIB/apps/$APP/app.sh"
-      if [[ -f "$plugin" ]]; then
-        # shellcheck disable=SC1090
-        source "$plugin"
-        app_nginx_locations
+      if declare -F "${APP}_nginx_locations" >/dev/null; then
+        "${APP}_nginx_locations"
       else
         warn "Неизвестное приложение '$APP' для $DOMAIN — отдаю 403."
         printf '    location / {\n        return 403;\n    }\n'
