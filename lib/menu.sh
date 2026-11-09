@@ -34,15 +34,18 @@ _menu_domains() {
 _menu_certs() {
   while :; do
     _menu_header
-    domain_list
+    cert_list
     echo
-    printf '  1) Выпустить сертификат (если нет)\n  2) Перевыпустить принудительно\n  3) Продлить все, у которых подходит срок\n  4) Установить свой сертификат из файлов\n  0) Назад\n\n'
+    printf '  1) Wildcard через Cloudflare (*.зона + зона)\n  2) Отдельный сертификат для домена (http-01)\n  3) Перевыпустить принудительно\n  4) Экспорт — для переноса на другую ноду\n  5) Импорт — архив/папка/файлы с другой ноды\n  6) Продлить все, у которых подходит срок\n  7) Удалить wildcard\n  0) Назад\n\n'
     local c; read -r -p "Выбор: " c || return 0
     case "$c" in
-      1) _menu_run cert_cmd issue ;;
-      2) _menu_run cert_cmd reissue ;;
-      3) _menu_run cert_cmd renew ;;
-      4) _menu_run cert_cmd manual ;;
+      1) _menu_run cert_cmd wildcard ;;
+      2) _menu_run cert_cmd issue ;;
+      3) _menu_run cert_cmd reissue ;;
+      4) _menu_run cert_cmd export ;;
+      5) _menu_run cert_cmd import ;;
+      6) _menu_run cert_cmd renew ;;
+      7) _menu_run cert_cmd wildcard remove ;;
       0|"") return 0 ;;
     esac
   done

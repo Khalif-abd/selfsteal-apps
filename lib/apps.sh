@@ -54,10 +54,8 @@ domain_ensure() {
     apply_config || { rm -f "$(domain_file "$d")"; die "Не удалось применить конфиг для $d."; }
     xray_domain_hint "$d"
   fi
-  if ! has_cert "$d"; then
-    issue_cert "$d" || warn "TLS для $d пока не активен. Повторите: selfsteal-apps cert issue $d"
-    apply_config
-  fi
+  domain_obtain_cert "$d" auto
+  apply_config
 }
 
 # Return a domain to a neutral stub when its app goes away.

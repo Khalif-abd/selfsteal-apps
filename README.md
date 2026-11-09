@@ -120,10 +120,43 @@ sudo selfsteal-apps adopt
 
 ## Сертификаты
 
-- Let's Encrypt, http-01 через webroot нашего nginx на :80 — без iptables и временных портов. **TCP/80 должен быть открыт снаружи.**
-- ECDSA P-256, срок 90 дней, acme.sh продлевает сам (cron) и делает `nginx -s reload`.
-- Перед выпуском: проверка A-записи (= IP сервера) и локальная проверка challenge-пути.
-- acme.sh живёт отдельно (`/etc/selfsteal-apps/acme`) и не пересекается с `~/.acme.sh`.
+Два способа получить сертификат, плюс перенос готового:
+
+| | Отдельный на домен | Wildcard через Cloudflare |
+|---|---|---|
+| Команда | `cert issue meet.example.com` | `cert wildcard example.com` (можно указать и поддомен — зона определится сама) |
+| Покрывает | один хост | `*.example.com` + `example.com` (поддомены 1-го уровня) |
+| Проверка | http-01, **нужен открытый TCP/80** | dns-01 через API Cloudflare, порт 80 не нужен |
+| CT-логи (crt.sh) | виден каждый поддомен | виден только `*.example.com` |
+| Продление | автоматически (acme.sh, cron) | автоматически, тоже через Cloudflare |
+
+- **Домен сам находит wildcard.** При `domain add` если в хранилище есть wildcard его зоны — он используется,
+  ничего не выпускается. Если нет — в меню выбор: отдельный / wildcard / импорт / без сертификата.
+  Без меню: при сохранённом токене зоны — wildcard, иначе http-01 (`--http`, `--wildcard`, `--no-cert` — явно).
+- **Токен Cloudflare:** My Profile → API Tokens → Create Token → шаблон «Edit zone DNS», Zone Resources —
+  только нужная зона, желательно Client IP Filtering по IP нод. Плюс **Zone ID** (зона → Overview, справа внизу).
+  Хранится в `/etc/selfsteal-apps/cloudflare/<зона>.env` (600), у каждой зоны свой.
+- Let's Encrypt выдаёт один и тот же набор имён не больше **5 раз в неделю** — не выпускайте один wildcard
+  на многих нодах, выпустите на одной и перенесите.
+
+### Перенос на другую ноду (вручную)
+
+```bash
+# на ноде, где сертификат выпущен
+sudo selfsteal-apps cert export example.com          # -> /root/selfsteal-cert-star.example.com-<дата>.tar.gz
+scp /root/selfsteal-cert-star.example.com-*.tar.gz root@node2:/root/
+
+# на другой ноде
+sudo selfsteal-apps cert import /root/selfsteal-cert-star.example.com-<дата>.tar.gz
+```
+
+`import` принимает архив, папку или пару `fullchain.pem privkey.pem`; сам читает имена из сертификата
+(wildcard или нет), проверяет, что ключ подходит, и подключает все домены зоны.
+Можно и совсем руками: скопировать папку `/opt/selfsteal-apps/nginx/ssl/star.example.com/` в тот же путь и
+выполнить `selfsteal-apps restart`.
+
+На ноде-получателе сертификат **не продлевается** (`cert list` покажет «без автопродления» и подсветит,
+когда до конца < 14 дней) — после продления на исходной ноде повторите экспорт/импорт.
 
 ## Где что лежит
 
@@ -135,7 +168,9 @@ sudo selfsteal-apps adopt
 | `/etc/selfsteal-apps/domains/*.env` | по файлу на домен |
 | `/etc/selfsteal-apps/acme/` | acme.sh и его данные |
 | `/opt/selfsteal-apps/apps/<имя>/` | данные приложений |
-| `/opt/selfsteal-apps/nginx/` | docker-compose, nginx.conf, `conf.d/sites/<домен>.conf`, `ssl/<домен>/` |
+| `/opt/selfsteal-apps/nginx/` | docker-compose, nginx.conf, `conf.d/sites/<домен>.conf` |
+| `/opt/selfsteal-apps/nginx/ssl/` | сертификаты: `<домен>/` и `star.<зона>/` (wildcard) |
+| `/etc/selfsteal-apps/cloudflare/` | токены Cloudflare по зонам |
 | `/var/log/selfsteal-apps.log` | журнал действий скрипта |
 
 Логи nginx — в `docker logs selfsteal-nginx` (с ротацией 3×10 МБ), реальный IP клиента берётся из proxy_protocol.
@@ -146,7 +181,7 @@ Debian/Ubuntu (или другой Linux с systemd/cron), root, Docker + Compos
 
 ## Планы
 
-Nextcloud, Matrix + Element как модули `apps/<name>/`, wildcard через DNS-01,
+Nextcloud, Matrix + Element как модули `apps/<name>/`, центральная раздача сертификатов на ноды,
 relay-режим (свой 443, маршрутизация по SNI / секретным путям на зарубежную ноду).
 
 ## Лицензия

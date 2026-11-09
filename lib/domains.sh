@@ -32,16 +32,66 @@ _pick_page() {
   for p in "${STUB_PAGES[@]}"; do [[ "$(page_label "$p")" == "$choice" ]] && { PAGE="$p"; return; }; done
 }
 
-# domain_add DOMAIN [--page P | --proxy URL] [--cert FILE --key FILE] [--no-cert]
+# Get a certificate for a domain that has none.
+# domain_obtain_cert DOMAIN MODE [cf-token] [cf-zone-id]
+#   MODE: auto | http | wildcard | none
+#   auto: interactive -> ask; otherwise wildcard if Cloudflare creds for the zone are saved, else http-01
+domain_obtain_cert() {
+  local d="$1" mode="${2:-auto}" token="${3:-}" zid="${4:-}" zone w
+  zone="$(registrable_zone "$d")"
+  if has_cert "$d"; then
+    w="$(covering_wildcard "$d" || true)"
+    if [[ -n "$w" ]]; then
+      _set_cert_source "$d" wildcard
+      log "$d: используется wildcard *.${w#star.}"
+    fi
+    return 0
+  fi
+  if [[ "$mode" == auto ]]; then
+    if is_interactive; then
+      local c def=1
+      [[ -f "$(_cf_file "$zone")" ]] && def=2
+      choose c "Сертификат для $d" "$def" \
+        "Отдельный на $d (http-01, нужен открытый TCP/80)" \
+        "Wildcard *.$zone через Cloudflare (покроет все поддомены)" \
+        "Импортировать готовый (архив/файлы с другой ноды)" \
+        "Пока без сертификата"
+      case "$c" in
+        Отдельный*) mode=http;;
+        Wildcard*)  mode=wildcard;;
+        Импорт*)    mode=import;;
+        *)          mode=none;;
+      esac
+    elif [[ -f "$(_cf_file "$zone")" ]]; then mode=wildcard
+    else mode=http
+    fi
+  fi
+  case "$mode" in
+    none) warn "Сертификата нет — TLS для $d не активен." ;;
+    http) issue_cert "$d" || warn "TLS для $d пока не активен. Повторите: selfsteal-apps cert issue $d" ;;
+    wildcard)
+      local a=("$zone"); [[ -n "$token" ]] && a+=(--cf-token "$token"); [[ -n "$zid" ]] && a+=(--cf-zone-id "$zid")
+      ( wildcard_issue "${a[@]}" ) || warn "Wildcard не выпущен. Повторите: selfsteal-apps cert wildcard $zone"
+      has_cert "$d" && _set_cert_source "$d" wildcard ;;
+    import) ( cert_import ) || warn "Импорт не удался." ;;
+  esac
+  return 0
+}
+
+# domain_add DOMAIN [--page P | --proxy URL] [--wildcard [--cf-token T --cf-zone-id ID] | --http | --cert F --key K | --no-cert]
 domain_add() {
-  local d="" page="" upstream="" crt="" key="" no_cert=0
+  local d="" page="" upstream="" crt="" key="" mode="auto" token="" zid=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --page) page="${2:-}"; shift 2;;
       --proxy) upstream="${2:-}"; shift 2;;
       --cert) crt="${2:-}"; shift 2;;
       --key) key="${2:-}"; shift 2;;
-      --no-cert) no_cert=1; shift;;
+      --no-cert) mode=none; shift;;
+      --http) mode=http; shift;;
+      --wildcard) mode=wildcard; shift;;
+      --cf-token) token="${2:-}"; shift 2;;
+      --cf-zone-id) zid="${2:-}"; shift 2;;
       -*) die "Неизвестная опция: $1";;
       *) d="$1"; shift;;
     esac
@@ -80,10 +130,8 @@ domain_add() {
 
   if [[ "$CERT_SOURCE" == "manual" ]]; then
     install_manual_cert "$d" "$crt" "$key"
-  elif (( no_cert )); then
-    warn "Сертификат не выпускался (--no-cert). TLS для $d не активен."
   else
-    issue_cert "$d" || warn "TLS для $d пока не активен. Повторите: selfsteal-apps cert issue $d"
+    domain_obtain_cert "$d" "$mode" "$token" "$zid"
   fi
   apply_config
 

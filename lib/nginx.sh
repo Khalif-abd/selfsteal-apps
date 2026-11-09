@@ -211,12 +211,8 @@ site_locations() {
   esac
 }
 
-cert_path()     { printf '%s/%s/fullchain.pem' "$NGINX_SSL" "$1"; }
-cert_key_path() { printf '%s/%s/privkey.pem' "$NGINX_SSL" "$1"; }
-has_cert()      { [[ -s "$(cert_path "$1")" && -s "$(cert_key_path "$1")" ]]; }
-
 render_site() {
-  local d="$1" out listen redirect_port=""
+  local d="$1" out listen redirect_port="" cn
   load_domain "$d" || return 1
   out="$NGINX_SITES/$d.conf"
   listen="$(nginx_listen_addr)"
@@ -240,7 +236,8 @@ server {
     }
 }
 EOF
-    if has_cert "$d"; then
+    cn="$(domain_cert_name "$d")"
+    if store_has "$cn"; then
       cat <<EOF
 
 server {
@@ -248,8 +245,8 @@ server {
     http2 on;
     server_name ${d};
 
-    ssl_certificate     /etc/nginx/ssl/${d}/fullchain.pem;
-    ssl_certificate_key /etc/nginx/ssl/${d}/privkey.pem;
+    ssl_certificate     /etc/nginx/ssl/${cn}/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/${cn}/privkey.pem;
 
 $(_realip_block)
 $(site_locations)

@@ -124,29 +124,44 @@ cert_cmd() {
   local sub="${1:-}"; shift || true
   is_installed || die "Не установлено."
   case "$sub" in
-    status|"") domain_list ;;
+    status|list|ls|"") cert_list ;;
     issue|reissue)
       local d="${1:-}"
       [[ -n "$d" ]] || { pick_domain d || return 0; }
-      load_domain "$d" || die "Домен $d не найден."
+      domain_exists "$d" || die "Домен $d не найден."
+      local n; n="$(domain_cert_name "$d")"
+      if is_wildcard_name "$n" && store_has "$n"; then
+        [[ "$sub" == issue ]] && { log "$d уже покрыт wildcard *.${n#star.}"; return 0; }
+        store_renewed_here "$n" || die "Wildcard *.${n#star.} импортирован — перевыпускайте его там, где он выпущен, или: cert wildcard ${n#star.}"
+        wildcard_issue "${n#star.}" --force
+        return
+      fi
       if [[ "$sub" == reissue ]]; then issue_cert "$d" force || return 1
       else issue_cert "$d" || return 1
       fi
-      CERT_SOURCE="acme"; save_domain
+      _set_cert_source "$d" acme
       apply_config
       ;;
+    wildcard)
+      case "${1:-}" in
+        remove|rm|del) shift; wildcard_remove "$@" ;;
+        *) wildcard_issue "$@" ;;
+      esac
+      ;;
     renew) renew_all ;;
+    export) cert_export "$@" ;;
+    import) cert_import "$@" ;;
     manual)
       local d="${1:-}" crt="${2:-}" key="${3:-}"
       [[ -n "$d" ]] || { pick_domain d || return 0; }
-      load_domain "$d" || die "Домен $d не найден."
+      domain_exists "$d" || die "Домен $d не найден."
       [[ -n "$crt" ]] || ask crt "Путь к fullchain (PEM)"
       [[ -n "$key" ]] || ask key "Путь к приватному ключу (PEM)"
       install_manual_cert "$d" "$crt" "$key"
-      CERT_SOURCE="manual"; save_domain
+      _set_cert_source "$d" manual
       apply_config
       ;;
-    *) die "cert: status | issue <домен> | reissue <домен> | renew | manual <домен> <crt> <key>";;
+    *) die "cert: list | issue <домен> | reissue <домен> | wildcard <зона|поддомен> [--cf-token T --cf-zone-id ID] | wildcard remove <зона> | export [что] [файл] | import <архив|папка|crt key> | renew";;
   esac
 }
 
@@ -221,7 +236,8 @@ ${C_BOLD}Установка${C_RESET}
 ${C_BOLD}Домены${C_RESET}
   domain list
   domain add <домен> [--page 403|404|502|503|welcome] [--proxy http://127.0.0.1:8000]
-                     [--cert fullchain.pem --key privkey.pem] [--no-cert]
+                     [--http | --wildcard [--cf-token T --cf-zone-id ID] | --no-cert]
+                     (если есть wildcard зоны — он подхватывается сам)
   domain set <домен> --page P | --proxy URL
   domain remove <домен>
 
@@ -232,7 +248,15 @@ ${C_BOLD}Приложения${C_RESET}
   app jitsi user list | add <имя> [пароль] | passwd <имя> [пароль] | del <имя>
 
 ${C_BOLD}Сертификаты${C_RESET}
-  cert status | issue <домен> | reissue <домен> | renew | manual <домен> <crt> <key>
+  cert list                                  все сертификаты и какие домены их используют
+  cert issue <домен> | reissue <домен>       отдельный сертификат (http-01) / перевыпуск
+  cert wildcard <зона или поддомен> [--cf-token T] [--cf-zone-id ID]
+                                             *.зона + зона через Cloudflare DNS-01, автопродление
+  cert wildcard remove <зона>
+  cert export [домен|зона] [файл.tar.gz]     выгрузить для переноса на другую ноду
+  cert import <архив.tar.gz | папка | fullchain.pem privkey.pem>
+                                             имена определяются из сертификата сами
+  cert renew                                 продлить всё, у чего подходит срок
 
 ${C_BOLD}Сервис${C_RESET}
   status | logs [N] | restart | down | xray | update | version | uninstall
