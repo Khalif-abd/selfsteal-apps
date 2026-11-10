@@ -205,13 +205,27 @@ _acme_install_cert() {
   acme --install-cert -d "$main" --ecc \
     --fullchain-file "$(cert_path "$name")" \
     --key-file "$(cert_key_path "$name")" \
-    --reloadcmd "docker exec $CONTAINER nginx -s reload >/dev/null 2>&1" >/dev/null 2>&1 && return 0
+    --reloadcmd "$NGINX_RELOAD_CMD >/dev/null 2>&1" >/dev/null 2>&1 && return 0
   # acme.sh copies the files first and runs reloadcmd last: a failed reload alone is not a failed install
   if store_has "$name"; then
     warn "acme.sh не смог перезагрузить nginx (файлы сертификата на месте) — перезагружу сам."
     return 0
   fi
   return 1
+}
+
+# Certs issued by <=0.4.1 keep 'docker exec ... nginx -s reload' as acme.sh reloadcmd, which can fail
+# (see nginx_hup). Re-running --install-cert rewrites it; done once per node.
+acme_migrate_reloadcmd() {
+  local mark="$CONF_DIR/.reloadcmd-hup" n main
+  [[ -f "$mark" ]] && return 0
+  acme_installed || { touch "$mark"; return 0; }
+  for n in $(store_names); do
+    store_renewed_here "$n" || continue
+    if is_wildcard_name "$n"; then main="*.${n#star.}"; else main="$n"; fi
+    _acme_install_cert "$main" "$n" >/dev/null 2>&1 || warn "Не удалось обновить reloadcmd для $n."
+  done
+  touch "$mark"
 }
 
 # issue_cert DOMAIN [force] — single-host certificate via http-01.

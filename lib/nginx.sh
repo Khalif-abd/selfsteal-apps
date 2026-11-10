@@ -310,8 +310,12 @@ apply_config() {
   rm -rf "$backup"
 
   if container_running && [[ "${_SSA_RECREATE:-0}" != "1" ]]; then
-    docker exec "$CONTAINER" nginx -s reload >/dev/null 2>&1
-    log "nginx перезагружен."
+    if nginx_hup; then
+      log "nginx перезагружен."
+    else
+      warn "Не удалось послать reload nginx — перезапускаю контейнер."
+      nginx_up
+    fi
   else
     nginx_up
   fi
@@ -335,10 +339,15 @@ nginx_up() {
   log "nginx запущен ($CONTAINER)."
 }
 
+# Reload = SIGHUP to the master (PID 1) from the host via docker. 'docker exec nginx -s reload'
+# fails on some hosts with "kill(1, 1) failed (13: Permission denied)" (AppArmor), so never use it.
+NGINX_RELOAD_CMD="docker kill -s HUP $CONTAINER"
+nginx_hup() { docker kill -s HUP "$CONTAINER" >/dev/null 2>&1; }
+
 nginx_reload() {
   container_running || { nginx_up; return; }
   docker exec "$CONTAINER" nginx -t >/dev/null 2>&1 || { docker exec "$CONTAINER" nginx -t; die "nginx -t не прошёл."; }
-  docker exec "$CONTAINER" nginx -s reload >/dev/null 2>&1
+  nginx_hup || { warn "reload не прошёл — перезапускаю контейнер."; nginx_up; }
 }
 
 # Ensures nothing else holds :80 (and the TCP listen port in tcp mode).

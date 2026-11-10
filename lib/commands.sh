@@ -114,7 +114,7 @@ logs_cmd() {
   docker logs -f --tail "${1:-200}" "$CONTAINER"
 }
 
-restart_cmd() { is_installed || die "Не установлено."; _SSA_RECREATE=1 apply_config; }
+restart_cmd() { is_installed || die "Не установлено."; acme_migrate_reloadcmd; _SSA_RECREATE=1 apply_config; }
 
 down_cmd() {
   is_installed || die "Не установлено."
