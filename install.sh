@@ -21,7 +21,14 @@ command -v tar  >/dev/null || die "Нужен tar."
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-say "Скачиваю ${REPO}@${BRANCH}..."
+# archive/refs/heads/<branch> is cached by GitHub for minutes after a push; pin to the commit instead
+sha=""
+if [[ -z "${SSA_TARBALL:-}" ]]; then
+  sha="$(curl -fsSL --max-time 10 -H 'Accept: application/vnd.github.sha' \
+    "https://api.github.com/repos/${REPO}/commits/${BRANCH}" 2>/dev/null || true)"
+  [[ "$sha" =~ ^[0-9a-f]{40}$ ]] && TARBALL="https://github.com/${REPO}/archive/${sha}.tar.gz" || sha=""
+fi
+say "Скачиваю ${REPO}@${BRANCH}${sha:+ (${sha:0:7})}..."
 curl -fsSL "$TARBALL" -o "$tmp/src.tgz" || die "Не удалось скачать $TARBALL"
 tar -xzf "$tmp/src.tgz" -C "$tmp"
 src="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d | head -1)"
