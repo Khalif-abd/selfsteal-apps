@@ -205,7 +205,13 @@ _acme_install_cert() {
   acme --install-cert -d "$main" --ecc \
     --fullchain-file "$(cert_path "$name")" \
     --key-file "$(cert_key_path "$name")" \
-    --reloadcmd "docker exec $CONTAINER nginx -s reload >/dev/null 2>&1" >/dev/null
+    --reloadcmd "docker exec $CONTAINER nginx -s reload >/dev/null 2>&1" >/dev/null 2>&1 && return 0
+  # acme.sh copies the files first and runs reloadcmd last: a failed reload alone is not a failed install
+  if store_has "$name"; then
+    warn "acme.sh не смог перезагрузить nginx (файлы сертификата на месте) — перезагружу сам."
+    return 0
+  fi
+  return 1
 }
 
 # issue_cert DOMAIN [force] — single-host certificate via http-01.
