@@ -105,8 +105,49 @@ status_cmd() {
   else
     printf ' Автопродление:  %sне настроено%s\n' "$C_YELLOW" "$C_RESET"
   fi
+  ip_status
   domain_list
   apps_status_brief
+}
+
+# ip [status | on [домен] | off] — show a site on https://<IP> (and unknown SNI) or reject the handshake.
+ip_cmd() {
+  is_installed || die "Не установлено."
+  local sub="${1:-status}" d="${2:-}"
+  case "$sub" in
+    status|"") ip_status ;;
+    on|enable)
+      if [[ -z "$d" ]]; then
+        local ds=() x
+        for x in $(list_domains); do has_cert "$x" && ds+=("$x"); done
+        (( ${#ds[@]} )) || die "Нет доменов с сертификатом — показывать по IP нечего."
+        if (( ${#ds[@]} == 1 )) || ! is_interactive; then d="${ds[0]}"
+        else choose d "Какой сайт показывать по IP" 1 "${ds[@]}"; fi
+      fi
+      domain_exists "$d" || die "Домен $d не найден."
+      has_cert "$d" || die "У $d нет сертификата — сначала выпустите его."
+      IP_ACCESS=1; IP_DOMAIN="$d"; save_config
+      apply_config || die "Не удалось применить конфиг."
+      log "По https://${PUBLIC_IP:-<IP>} теперь открывается $d (браузер предупредит о сертификате — это нормально)."
+      ;;
+    off|disable)
+      IP_ACCESS=0; save_config
+      apply_config || die "Не удалось применить конфиг."
+      log "Доступ по IP выключен: TLS-соединения без известного домена обрываются."
+      ;;
+    *) die "Использование: selfsteal-apps ip [status | on [домен] | off]" ;;
+  esac
+}
+
+ip_status() {
+  local d
+  if d="$(ip_access_domain)"; then
+    printf ' Доступ по IP:   %sвключён%s — https://%s → %s\n' "$C_GREEN" "$C_RESET" "${PUBLIC_IP:-<IP>}" "$d"
+  elif [[ "${IP_ACCESS:-0}" == "1" ]]; then
+    printf ' Доступ по IP:   %sвключён, но нет домена с сертификатом%s — соединения обрываются\n' "$C_YELLOW" "$C_RESET"
+  else
+    printf ' Доступ по IP:   выключен (соединение обрывается)\n'
+  fi
 }
 
 logs_cmd() {
@@ -241,6 +282,7 @@ ${C_BOLD}Домены${C_RESET}
                      (если есть wildcard зоны — он подхватывается сам)
   domain set <домен> --page P | --proxy URL
   domain remove <домен>
+  ip [status | on [домен] | off] показывать сайт по https://<IP> (по умолчанию выкл — соединение обрывается)
 
 ${C_BOLD}Приложения${C_RESET}
   app list

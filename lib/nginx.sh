@@ -6,8 +6,8 @@
 #           [proxy_protocol, xver 1] -> nginx, TLS with the real cert -> site
 #   TCP/80  -> nginx: ACME http-01 + redirect to https
 #
-# Unknown SNI on the TLS listener -> handshake rejected (ssl_reject_handshake),
-# like many real servers do.
+# Unknown SNI / bare IP on the TLS listener -> handshake rejected (ssl_reject_handshake),
+# like many real servers do; or, with IP access on, the site of IP_DOMAIN.
 
 COMPOSE_PROJECT="selfsteal-apps"
 
@@ -145,11 +145,54 @@ server {
     }
 }
 
-# TLS catch-all for unknown SNI: reject the handshake.
+EOF
+  local ipd
+  if ipd="$(ip_access_domain)"; then
+    # subshell: load_domain sets globals used by site_locations
+    ( _ip_default_server "$ipd" "$listen" ) >> "$NGINX_CONFD/00-default.conf"
+  else
+    cat >> "$NGINX_CONFD/00-default.conf" <<EOF
+
+# TLS catch-all for unknown SNI / bare IP: reject the handshake.
 server {
     listen ${listen} $(_tls_listen_params) default_server;
     server_name _;
     ssl_reject_handshake on;
+}
+EOF
+  fi
+}
+
+# ip_access_domain — prints the domain shown on https://<IP>; fails if IP access is off or impossible.
+ip_access_domain() {
+  [[ "${IP_ACCESS:-0}" == "1" ]] || return 1
+  local d
+  for d in "${IP_DOMAIN:-}" $(list_domains); do
+    [[ -n "$d" ]] && domain_exists "$d" && has_cert "$d" && { printf '%s' "$d"; return 0; }
+  done
+  return 1
+}
+
+# TLS catch-all serving domain D's site. Host is pinned to D for the upstream:
+# apps (Nextcloud trusted_domains, Jitsi) answer only to their own name.
+_ip_default_server() {
+  local d="$1" listen="$2" cn locs
+  load_domain "$d" || return 1
+  cn="$(domain_cert_name "$d")"
+  locs="$(site_locations | sed "s/\\\$host/$d/g")"
+  cat <<EOF
+
+# TLS catch-all for unknown SNI / bare IP: site of ${d} (IP access is on).
+server {
+    listen ${listen} $(_tls_listen_params) default_server;
+    http2 on;
+    server_name _;
+
+    ssl_certificate     /etc/nginx/ssl/${cn}/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/${cn}/privkey.pem;
+
+$(_realip_block)
+${locs}
 }
 EOF
 }

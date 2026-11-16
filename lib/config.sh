@@ -28,8 +28,10 @@ NGINX_IMAGE="nginx:stable-alpine"
 CONTAINER="selfsteal-nginx"
 ACME_EMAIL=""
 PUBLIC_IP=""
+IP_ACCESS="0"                   # 1 = https://<IP> and unknown SNI show IP_DOMAIN's site; 0 = reject handshake
+IP_DOMAIN=""                    # domain shown on IP access (empty/removed -> first domain with a cert)
 
-CONFIG_KEYS=(LISTEN_MODE SOCKET_PATH TCP_PORT PUBLIC_PORT PROXY_PROTOCOL NGINX_IMAGE CONTAINER ACME_EMAIL PUBLIC_IP)
+CONFIG_KEYS=(LISTEN_MODE SOCKET_PATH TCP_PORT PUBLIC_PORT PROXY_PROTOCOL NGINX_IMAGE CONTAINER ACME_EMAIL PUBLIC_IP IP_ACCESS IP_DOMAIN)
 DOMAIN_KEYS=(DOMAIN APP PAGE UPSTREAM CERT_SOURCE ADDED_AT)
 
 is_installed() { [[ -f "$CONFIG_FILE" && -f "$NGINX_DIR/docker-compose.yml" ]]; }

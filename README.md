@@ -13,7 +13,8 @@ TCP/443 → Xray Reality ─┬─ VPN-клиент → VPN
 TCP/80  → nginx: ACME http-01 + редирект на https
 ```
 
-Неизвестный SNI на TLS-слушателе → handshake отклоняется (`ssl_reject_handshake`), как у многих реальных серверов.
+Неизвестный SNI и заход по голому IP (`https://<IP>`) на TLS-слушателе → handshake отклоняется
+(`ssl_reject_handshake`), как у многих реальных серверов. Это можно поменять — см. «Доступ по IP».
 
 ## Установка
 
@@ -52,6 +53,19 @@ sudo selfsteal-apps cert manual meet.example.com fullchain.pem privkey.pem   # �
 # сервис
 sudo selfsteal-apps status | logs | restart | down | xray | update | uninstall [--purge]
 ```
+
+### Доступ по IP
+
+```bash
+sudo selfsteal-apps ip on meet.example.com   # https://<IP> показывает сайт этого домена
+sudo selfsteal-apps ip off                   # по умолчанию: соединение без известного домена обрывается
+sudo selfsteal-apps ip                       # текущий режим
+```
+
+То же — в меню «Домены». Во включённом режиме по `https://<IP>` (и по любому неизвестному имени) открывается
+сайт выбранного домена с его сертификатом; браузер предупредит, что сертификат выдан не на IP, — после
+подтверждения сайт откроется. Приложению при этом передаётся имя домена, поэтому Jitsi и Nextcloud работают.
+Если выбранный домен удалить, показывается следующий домен с сертификатом. `http://<IP>` не меняется (404).
 
 Заглушки: `403`, `404`, `502`, `503` (стандартные страницы ошибок nginx, без версии) и `welcome` («Welcome to nginx!»).
 

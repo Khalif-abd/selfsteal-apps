@@ -20,12 +20,20 @@ _menu_domains() {
     _menu_header
     domain_list
     echo
-    printf '  1) Добавить домен\n  2) Изменить содержимое домена\n  3) Удалить домен\n  0) Назад\n\n'
+    ip_status
+    echo
+    local ipt="Включить показ сайта по IP"
+    [[ "${IP_ACCESS:-0}" == "1" ]] && ipt="Выключить показ сайта по IP"
+    printf '  1) Добавить домен\n  2) Изменить содержимое домена\n  3) Удалить домен\n  4) %s\n' "$ipt"
+    [[ "${IP_ACCESS:-0}" == "1" ]] && printf '  5) Сменить сайт, который показывается по IP\n'
+    printf '  0) Назад\n\n'
     local c; read -r -p "Выбор: " c || return 0
     case "$c" in
       1) _menu_run domain_add ;;
       2) _menu_run domain_set ;;
       3) _menu_run domain_remove ;;
+      4) if [[ "${IP_ACCESS:-0}" == "1" ]]; then _menu_run ip_cmd off; else _menu_run ip_cmd on; fi ;;
+      5) [[ "${IP_ACCESS:-0}" == "1" ]] && _menu_run ip_cmd on ;;
       0|"") return 0 ;;
     esac
   done

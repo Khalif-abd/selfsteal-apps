@@ -34,6 +34,7 @@ case "$cmd" in
   adopt)                adopt_cmd "$@" ;;
   domain | domains)     domain_cmd "$@" ;;
   cert | certs)         cert_cmd "$@" ;;
+  ip)                   ip_cmd "$@" ;;
   app | apps)           app_cmd "$@" ;;
   status)               status_cmd ;;
   logs)                 logs_cmd "$@" ;;
