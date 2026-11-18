@@ -30,8 +30,9 @@ ACME_EMAIL=""
 PUBLIC_IP=""
 IP_ACCESS="0"                   # 1 = https://<IP> and unknown SNI show IP_DOMAIN's site; 0 = reject handshake
 IP_DOMAIN=""                    # domain shown on IP access (empty/removed -> first domain with a cert)
+UI_EMOJI="1"                    # 1 = emoji icons in the menu; 0 = plain text (for terminals that draw them badly)
 
-CONFIG_KEYS=(LISTEN_MODE SOCKET_PATH TCP_PORT PUBLIC_PORT PROXY_PROTOCOL NGINX_IMAGE CONTAINER ACME_EMAIL PUBLIC_IP IP_ACCESS IP_DOMAIN)
+CONFIG_KEYS=(LISTEN_MODE SOCKET_PATH TCP_PORT PUBLIC_PORT PROXY_PROTOCOL NGINX_IMAGE CONTAINER ACME_EMAIL PUBLIC_IP IP_ACCESS IP_DOMAIN UI_EMOJI)
 DOMAIN_KEYS=(DOMAIN APP PAGE UPSTREAM CERT_SOURCE ADDED_AT)
 
 is_installed() { [[ -f "$CONFIG_FILE" && -f "$NGINX_DIR/docker-compose.yml" ]]; }

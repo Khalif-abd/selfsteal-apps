@@ -92,7 +92,7 @@ status_cmd() {
   printf ' Публичный порт: %s\n' "$PUBLIC_PORT"
   printf ' IPv4:           %s\n' "${PUBLIC_IP:-?}"
   if container_running; then
-    printf ' nginx:          %sработает%s (%s)\n' "$C_GREEN" "$C_RESET" "$(docker inspect -f '{{.Config.Image}}' "$CONTAINER")"
+    printf ' nginx:          %sработает%s, версия %s (%s)\n' "$C_GREEN" "$C_RESET" "$(nginx_version || true)" "$(docker inspect -f '{{.Config.Image}}' "$CONTAINER")"
   else
     printf ' nginx:          %sне запущен%s\n' "$C_RED" "$C_RESET"
   fi
@@ -146,7 +146,7 @@ ip_status() {
   elif [[ "${IP_ACCESS:-0}" == "1" ]]; then
     printf ' Доступ по IP:   %sвключён, но нет домена с сертификатом%s — соединения обрываются\n' "$C_YELLOW" "$C_RESET"
   else
-    printf ' Доступ по IP:   выключен (соединение обрывается)\n'
+    printf ' Доступ по IP:   выключен — на https://%s соединение обрывается, сайт не видно\n' "${PUBLIC_IP:-<IP>}"
   fi
 }
 
@@ -254,9 +254,47 @@ update_cmd() {
   SSA_REPO="$SSA_REPO" SSA_BRANCH="$SSA_BRANCH" SSA_NO_LAUNCH=1 bash "$tmp" || { rm -f "$tmp"; die "Обновление не удалось."; }
   rm -f "$tmp"
   if is_installed; then
-    # re-exec the new code to re-render configs with possible template fixes
+    # re-exec the new code to re-render configs with possible template fixes (nginx image is not touched)
     "$BIN_LINK" restart
   fi
+}
+
+# nginx update — pull a fresh $NGINX_IMAGE (security fixes), test the config on it, recreate.
+# Separate from the script 'update' on purpose; plain 'restart' never pulls either.
+nginx_update_cmd() {
+  is_installed || die "Не установлено."
+  local old_v new_v running fresh
+  old_v="$(container_running && nginx_version || true)"
+  running="$(docker inspect -f '{{.Image}}' "$CONTAINER" 2>/dev/null || true)"
+
+  info "Скачиваю свежий образ $NGINX_IMAGE..."
+  docker pull -q "$NGINX_IMAGE" >/dev/null 2>&1 ||
+    die "Не удалось скачать $NGINX_IMAGE (нет доступа к Docker Hub?). Текущий nginx не тронут."
+
+  fresh="$(docker image inspect -f '{{.Id}}' "$NGINX_IMAGE" 2>/dev/null || true)"
+
+  if [[ -n "$fresh" && "$fresh" == "$running" ]] && container_running; then
+    log "nginx ${old_v:-?} — это уже последняя версия в $NGINX_IMAGE."
+    return 0
+  fi
+
+  new_v="$(docker run --rm --network none "$NGINX_IMAGE" nginx -v 2>&1 | sed -n 's#.*nginx/\([0-9.]*\).*#\1#p' | head -1 || true)"
+  info "Новая версия: nginx ${old_v:-?} → ${new_v:-?}. Проверяю конфиг на новом образе..."
+  if ! _SSA_TEST_IMAGE=1 restart_cmd; then
+    die "Конфиг не прошёл проверку на nginx ${new_v:-?} — работающий nginx не тронут. Пришлите вывод выше разработчику."
+  fi
+  log "nginx обновлён: ${old_v:-?} → $(nginx_version || echo "${new_v:-?}")."
+}
+
+# nginx [version | update]
+nginx_cmd() {
+  local sub="${1:-version}"; shift || true
+  case "$sub" in
+    version|status) is_installed || die "Не установлено."
+                    printf 'nginx %s (%s)\n' "$(container_running && nginx_version || echo 'не запущен')" "$NGINX_IMAGE" ;;
+    update|upgrade) nginx_update_cmd "$@" ;;
+    *) die "Использование: selfsteal-apps nginx [version | update]" ;;
+  esac
 }
 
 version_cmd() {
@@ -306,6 +344,8 @@ ${C_BOLD}Сертификаты${C_RESET}
   cert renew                                 продлить всё, у чего подходит срок
 
 ${C_BOLD}Сервис${C_RESET}
-  status | logs [N] | restart | down | xray | update | version | uninstall
+  status | logs [N] | restart | down | xray | version | uninstall
+  update                                     обновить скрипт (nginx не трогает)
+  nginx version | update                     версия nginx / скачать свежий образ nginx и пересоздать
 EOF
 }

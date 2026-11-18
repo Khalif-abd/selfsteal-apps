@@ -5,6 +5,7 @@
 #   <name>_install [args]     install or reconfigure (idempotent)
 #   <name>_uninstall          remove the app, keep the domain (back to a stub)
 #   <name>_status             print status
+#   <name>_version            short version for the main screen ("релиз stable-10590")
 #   <name>_logs [service]     follow logs
 #   <name>_update             update to the newest stable release
 #   <name>_cmd <sub> [args]   extra subcommands (e.g. users)

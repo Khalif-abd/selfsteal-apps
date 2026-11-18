@@ -325,6 +325,13 @@ nextcloud_status() {
 }
 
 nextcloud_brief() { _n_load; printf '%s' "$N_DOMAIN"; }
+nextcloud_version() {
+  _n_load
+  local ver
+  ver="$(curl -fsS --max-time 2 -H "Host: ${N_DOMAIN}" "http://127.0.0.1:${N_HTTP_PORT}/status.php" 2>/dev/null |
+    sed -n 's/.*"versionstring":"\([^"]*\)".*/\1/p' || true)"
+  if [[ -n "$ver" ]]; then printf 'версия %s' "$ver"; else printf 'ветка %s' "${N_MAJOR:-?}"; fi
+}
 
 nextcloud_logs() {
   nextcloud_installed || die "Nextcloud не установлен."

@@ -319,8 +319,9 @@ render_all() {
   for d in $(list_domains); do ( render_site "$d" ); done
 }
 
+# _SSA_TEST_IMAGE=1: test with the image on disk (e.g. freshly pulled), not the running container.
 nginx_test() {
-  if container_running; then
+  if container_running && [[ "${_SSA_TEST_IMAGE:-0}" != "1" ]]; then
     docker exec "$CONTAINER" nginx -t 2>&1
   else
     local shm=()

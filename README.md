@@ -30,6 +30,11 @@ sudo selfsteal-apps
 
 (без `sudo` команда сама перезапустится через sudo).
 
+Главный экран — сводка по ноде: версия nginx, режим доступа по IP, домены со сроком сертификатов
+(сначала те, что требуют внимания; на экране первые 5, остальные — в разделе «Домены») и приложения с версиями.
+Всё берётся с самой ноды, без запросов в интернет. Значки в меню выключаются в «Сервис» → «Выключить значки»
+(или `SSA_NO_EMOJI=1`), если терминал рисует их криво.
+
 ## Без меню
 
 ```bash
@@ -51,8 +56,15 @@ sudo selfsteal-apps cert renew                         # продлить, у к
 sudo selfsteal-apps cert manual meet.example.com fullchain.pem privkey.pem   # свой/wildcard
 
 # сервис
-sudo selfsteal-apps status | logs | restart | down | xray | update | uninstall [--purge]
+sudo selfsteal-apps status | logs | restart | down | xray | uninstall [--purge]
+sudo selfsteal-apps update          # только скрипт
+sudo selfsteal-apps nginx version   # какая версия nginx запущена
+sudo selfsteal-apps nginx update    # только nginx: скачать образ, проверить конфиг на нём, пересоздать
 ```
+
+nginx берётся из образа `nginx:stable-alpine` (сборки nginx.org, исправления безопасности приходят туда быстрее,
+чем в пакеты дистрибутивов). `restart` образ не скачивает — он вызывается при каждом изменении домена и должен
+работать без Docker Hub. `update` обновляет только сам скрипт; свежий nginx ставится отдельно — `nginx update`.
 
 ### Доступ по IP
 

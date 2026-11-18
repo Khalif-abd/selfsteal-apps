@@ -371,6 +371,7 @@ jitsi_status() {
 }
 
 jitsi_brief() { _j_load; printf '%s' "$J_DOMAIN"; }
+jitsi_version() { _j_load; printf 'релиз %s' "${J_TAG:-?}"; }
 
 jitsi_logs() {
   jitsi_installed || die "Jitsi не установлен."

@@ -10,10 +10,13 @@ _menu_run() {
 _menu_header() {
   load_config   # actions run in subshells; pick up what they saved
   clear 2>/dev/null || true
-  printf '%s selfsteal-apps %s%s  %s\n' "$C_BOLD$C_CYAN" "$SSA_VERSION" "$C_RESET" \
-    "$(is_installed && { container_running && printf '%s● nginx работает%s' "$C_GREEN" "$C_RESET" || printf '%s● nginx остановлен%s' "$C_RED" "$C_RESET"; } || printf '%s● не установлено%s' "$C_YELLOW" "$C_RESET")"
-  hr
+  dash_header
 }
+
+# _menu_item N ICON TEXT
+_menu_item() { printf '  %s%s)%s %s%s\n' "$C_BOLD" "$1" "$C_RESET" "$(ic "$2")" "$3"; }
+
+_menu_prompt() { echo; read -r -p "$(printf '%sВыбор:%s ' "$C_CYAN" "$C_RESET")" "$1"; }
 
 _menu_domains() {
   while :; do
@@ -62,13 +65,24 @@ _menu_certs() {
 _menu_service() {
   while :; do
     _menu_header
-    printf '  1) Перезапустить nginx (пересоздать конфиг)\n  2) Остановить nginx\n  3) Логи nginx (Ctrl+C — выход)\n  4) Проверить доступ Xray к сокету\n  0) Назад\n\n'
-    local c; read -r -p "Выбор: " c || return 0
+    local v; v="$(container_running && nginx_version || true)"
+    printf ' %snginx %s%s%s (%s)\n\n' "$(ic 🧩)" "$C_BOLD" "${v:-не запущен}" "$C_RESET" "$NGINX_IMAGE"
+    local et="Выключить значки в меню"; ui_emoji || et="Включить значки в меню"
+    _menu_item 1 🔄 "Перезапустить nginx (пересоздать конфиг)"
+    _menu_item 2 🆕 "Обновить nginx (скачать свежий образ)"
+    _menu_item 3 📜 "Логи nginx (Ctrl+C — выход)"
+    _menu_item 4 🔌 "Проверить доступ Xray к сокету"
+    _menu_item 5 ⛔ "Остановить nginx"
+    _menu_item 6 🎨 "$et"
+    _menu_item 0 🔙 "Назад"
+    local c; _menu_prompt c || return 0
     case "$c" in
       1) _menu_run restart_cmd ;;
-      2) _menu_run down_cmd ;;
+      2) _menu_run nginx_update_cmd ;;
       3) ( logs_cmd 100 ) || true ;;
       4) _menu_run check_xray_socket_access ;;
+      5) _menu_run down_cmd ;;
+      6) if ui_emoji; then UI_EMOJI=0; else UI_EMOJI=1; fi; save_config ;;
       0|"") return 0 ;;
     esac
   done
@@ -119,8 +133,10 @@ _menu_apps() {
 main_menu() {
   is_interactive || { help_cmd; return 0; }
   while :; do
-    _menu_header
+    load_config
+    clear 2>/dev/null || true
     if ! is_installed; then
+      dash_header
       if adopt_detect; then
         printf '  1) Перенести существующий nginx-selfsteal (adopt)\n'
       else
@@ -135,8 +151,17 @@ main_menu() {
       esac
       continue
     fi
-    printf '  1) Статус\n  2) Домены\n  3) Приложения (Jitsi, ...)\n  4) Сертификаты\n  5) Настройки для Xray / Remnawave\n  6) Сервис (перезапуск, логи)\n  8) Удалить\n  9) Обновить скрипт\n  0) Выход\n\n'
-    local c; read -r -p "Выбор: " c || return 0
+    dashboard
+    _menu_item 1 📊 "Подробный статус"
+    _menu_item 2 🌍 "Домены и доступ по IP"
+    _menu_item 3 📦 "Приложения (Jitsi, Nextcloud)"
+    _menu_item 4 🔐 "Сертификаты"
+    _menu_item 5 🔧 "Настройки для Xray / Remnawave"
+    _menu_item 6 🧰 "Сервис (перезапуск, логи, обновить nginx)"
+    _menu_item 8 🧹 "Удалить"
+    _menu_item 9 🔄 "Обновить скрипт"
+    _menu_item 0 🚪 "Выход"
+    local c; _menu_prompt c || return 0
     case "$c" in
       1) _menu_run status_cmd ;;
       2) _menu_domains ;;
