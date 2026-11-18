@@ -39,8 +39,8 @@ sudo selfsteal-apps
 
 ```bash
 # установка: сокет (по умолчанию) или TCP; публичный порт Reality — для редиректов http→https
-sudo selfsteal-apps install --socket --public-port 443 --email you@example.com --yes
-sudo selfsteal-apps install --tcp --tcp-port 9443 --public-port 8443 --yes
+sudo selfsteal-apps install --public-port 443 --email you@example.com --yes
+sudo selfsteal-apps install --tcp --public-port 443 --yes   # только если Xray не видит /dev/shm (по умолчанию — сокеты)
 
 # домены
 sudo selfsteal-apps domain add meet.example.com --proxy http://127.0.0.1:8000   # прокси на локальный сервис
@@ -78,6 +78,8 @@ sudo selfsteal-apps domain add meet.example.com --port 444 --page 404        # �
 sudo selfsteal-apps app jitsi install --domain meet.example.com --port 444   # Jitsi на :444
 sudo selfsteal-apps domain set meet.example.com --port 444 --page 502
 sudo selfsteal-apps domain remove meet.example.com --port 444                # сертификат остаётся, пока есть другие порты
+sudo selfsteal-apps domain move meet.example.com --to 8443                  # перенести на другой порт (меню: «Сменить порт»)
+sudo selfsteal-apps app jitsi port 444                                       # приложение — на другой порт без переустановки
 sudo selfsteal-apps xray                                                     # target и serverNames для каждого inbound
 ```
 
@@ -186,7 +188,14 @@ cron запускает `/opt/nginx-selfsteal/acme-renew.sh`, который с�
 Порты Xray берутся из системы (`ss`: процессы `rw-core` / `xray`), поэтому учитываются ноды с несколькими
 inbound (443, 444, 8443, 9443…). Каждое перенаправление (iptables, ip6tables, nft) оценивается по тому, откуда и куда
 оно ведёт: с порта Xray куда угодно — даже в другой inbound — 🔴 ломает этот inbound; с 443 в порт, где никто не
-слушает (Xray не на 443), — 🟡 мусор; в порт Xray с другого порта — показывается, но не трогается. Ещё `doctor` находит задания
+слушает (Xray не на 443), — 🟡 мусор; в порт Xray с другого порта — показывается, но не трогается.
+
+Для каждого публичного порта с доменами `doctor` проверяет связь Xray → nginx (по логам nginx за сутки): слушает
+ли Xray этот порт; не присылает ли inbound трафик без proxy protocol (в его `realitySettings` нужен `"xver": 1`);
+доходят ли вообще запросы — если за сутки пусто, откройте сайт в браузере и проверьте снова: пусто — значит
+у inbound неверный `target` (нужный `doctor` покажет).
+
+Ещё `doctor` находит задания
 `acme-renew.sh` в cron и пропавшее задание нашего автопродления (установщик DigneZzZ удаляет из cron все строки
 со словом `acme`). Удаляет только эти правила — Docker (`DOCKER*`) и остальные не трогает; cron-задания
 комментирует, копия crontab сохраняется в `/etc/selfsteal-apps/`. Та же проверка запускается перед `install` и

@@ -68,8 +68,9 @@ http {
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
 
+    # port=: public port (Xray inbound) of the listener — used by "doctor" to see traffic per inbound
     log_format main '$remote_addr - [$time_local] "$host" "$request" $status $body_bytes_sent '
-                    '"$http_referer" "$http_user_agent" rt=$request_time';
+                    '"$http_referer" "$http_user_agent" rt=$request_time port=$ssa_port';
     access_log /dev/stdout main;
 
     server_tokens off;
@@ -132,6 +133,7 @@ render_default_conf() {
 server {
     listen 80 default_server;
     server_name _;
+    set \$ssa_port 80;
 
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/acme;
@@ -195,6 +197,7 @@ server {
     listen ${listen} $(_tls_listen_params) default_server;
     http2 on;
     server_name _;
+    set \$ssa_port ${PORT};
 
     ssl_certificate     /etc/nginx/ssl/${cn}/fullchain.pem;
     ssl_certificate_key /etc/nginx/ssl/${cn}/privkey.pem;
@@ -278,6 +281,7 @@ render_site() {
 server {
     listen 80;
     server_name ${d};
+    set \$ssa_port 80;
 
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/acme;
@@ -300,6 +304,7 @@ server {
     listen $(port_listen "$PORT") $(_tls_listen_params);
     http2 on;
     server_name ${d};
+    set \$ssa_port ${PORT};
 
     ssl_certificate     /etc/nginx/ssl/${cn}/fullchain.pem;
     ssl_certificate_key /etc/nginx/ssl/${cn}/privkey.pem;

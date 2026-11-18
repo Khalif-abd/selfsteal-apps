@@ -29,17 +29,19 @@ _menu_domains() {
     [[ "${IP_ACCESS:-0}" == "1" ]] && ipt="Выключить показ сайта по IP"
     _menu_item 1 ➕ "Добавить домен"
     _menu_item 2 📝 "Изменить содержимое домена"
-    _menu_item 3 ❌ "Удалить домен"
-    _menu_item 4 🌐 "$ipt"
-    [[ "${IP_ACCESS:-0}" == "1" ]] && _menu_item 5 🔁 "Сменить сайт, который показывается по IP"
+    _menu_item 3 🔀 "Сменить порт домена"
+    _menu_item 4 ❌ "Удалить домен"
+    _menu_item 5 🌐 "$ipt"
+    [[ "${IP_ACCESS:-0}" == "1" ]] && _menu_item 6 🔁 "Сменить сайт, который показывается по IP"
     _menu_item 0 🔙 "Назад"
     local c; _menu_prompt c || return 0
     case "$c" in
       1) _menu_run domain_add ;;
       2) _menu_run domain_set ;;
-      3) _menu_run domain_remove ;;
-      4) if [[ "${IP_ACCESS:-0}" == "1" ]]; then _menu_run ip_cmd off; else _menu_run ip_cmd on; fi ;;
-      5) [[ "${IP_ACCESS:-0}" == "1" ]] && _menu_run ip_cmd on ;;
+      3) _menu_run domain_move ;;
+      4) _menu_run domain_remove ;;
+      5) if [[ "${IP_ACCESS:-0}" == "1" ]]; then _menu_run ip_cmd off; else _menu_run ip_cmd on; fi ;;
+      6) [[ "${IP_ACCESS:-0}" == "1" ]] && _menu_run ip_cmd on ;;
       0|"") return 0 ;;
     esac
   done
@@ -83,7 +85,7 @@ _menu_service() {
     _menu_item 3 📜 "Логи nginx (Ctrl+C — выход)"
     _menu_item 4 🔌 "Проверить доступ Xray к сокету"
     _menu_item 5 ⛔ "Остановить nginx"
-    _menu_item 6 🩺 "Диагностика (NAT на 443, старые задания cron, порты)"
+    _menu_item 6 🩺 "Диагностика (связь с Xray, NAT, cron, порты)"
     _menu_item 7 🎨 "$et"
     _menu_item 0 🔙 "Назад"
     local c; _menu_prompt c || return 0
@@ -100,6 +102,12 @@ _menu_service() {
   done
 }
 
+# Current public port of an app (from its address).
+_menu_app_port() {
+  local u=""; app_has "$1" brief && u="$("${1}_brief" 2>/dev/null || true)"
+  [[ "$u" =~ :([0-9]+)$ ]] && printf '%s' "${BASH_REMATCH[1]}" || printf '443'
+}
+
 _menu_app() {
   local a="$1"
   while :; do
@@ -111,6 +119,7 @@ _menu_app() {
       _menu_item 2 🆕 "Обновить до последней стабильной версии"
       _menu_item 3 📜 "Логи (Ctrl+C — выход)"
       _menu_item 4 ❌ "Удалить"
+      app_has "$a" set_port && _menu_item 5 🔀 "Сменить порт (сейчас $(_menu_app_port "$a"))"
       app_has "$a" menu_extra && "${a}_menu_extra"
     else
       _menu_item 1 📥 "Установить"
@@ -123,6 +132,7 @@ _menu_app() {
       2) app_installed "$a" && _menu_run "${a}_update" ;;
       3) app_installed "$a" && { ( "${a}_logs" ) || true; } ;;
       4) app_installed "$a" && _menu_run "${a}_uninstall" ;;
+      5) app_installed "$a" && app_has "$a" set_port && _menu_run "${a}_set_port" ;;
       *) if app_installed "$a" && app_has "$a" menu_action; then _menu_run "${a}_menu_action" "$c"; fi ;;
     esac
   done

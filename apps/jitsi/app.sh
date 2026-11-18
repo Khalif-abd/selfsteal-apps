@@ -349,6 +349,24 @@ jitsi_update() {
   log "Jitsi обновлён до $latest."
 }
 
+# jitsi port NEW — move Jitsi to another public port: new PUBLIC_URL, web recreated, site moved.
+jitsi_set_port() {
+  jitsi_installed || die "Jitsi не установлен."
+  _j_load
+  local new old="$J_PORT"
+  app_new_port new "$old" "${1:-}"
+  [[ "$new" == "$old" ]] && { info "Jitsi уже на порту $new."; return 0; }
+  _app_domain_conflict jitsi "$J_DOMAIN" "$new"
+  J_PORT="$new"
+  _j_prepare_env
+  _j_save
+  info "Перезапускаю Jitsi с новым адресом $(_j_url)..."
+  _j_compose --progress quiet up -d --remove-orphans || die "docker compose up не удался."
+  _j_wait_http
+  _SSA_MOVE=1 domain_ensure "$J_DOMAIN" jitsi "http://127.0.0.1:${J_HTTP_PORT}" "$J_PORT"
+  log "Jitsi Meet теперь: $(_j_url)"
+}
+
 jitsi_uninstall() {
   jitsi_installed || { info "Jitsi не установлен."; return 0; }
   _j_load

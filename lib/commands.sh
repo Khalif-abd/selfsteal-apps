@@ -34,16 +34,11 @@ install_cmd() {
 
   load_config
 
-  if [[ -z "$mode" ]] && is_interactive; then
-    local m
-    choose m "Как Xray передаёт трафик в nginx?" 1 \
-      "Unix-сокет $SOCKET_PATH (рекомендуется)" \
-      "TCP 127.0.0.1:PORT"
-    [[ "$m" == TCP* ]] && mode="tcp" || mode="socket"
-  fi
+  # Xray -> nginx goes through unix sockets in /dev/shm. TCP (--tcp) only for a node whose Xray
+  # cannot see /dev/shm; it is not asked: the choice changes nothing for the sites.
   LISTEN_MODE="${mode:-$LISTEN_MODE}"
   if [[ "$LISTEN_MODE" == "tcp" ]]; then
-    [[ -n "$tcp_port" ]] || ask tcp_port "Локальный TCP-порт nginx" "$TCP_PORT"
+    tcp_port="${tcp_port:-$TCP_PORT}"
     valid_port "$tcp_port" || die "Некорректный порт: $tcp_port"
     TCP_PORT="$tcp_port"
   fi
@@ -245,6 +240,7 @@ domain_cmd() {
     add) domain_add "$@" ;;
     rm|remove|del) domain_remove "$@" ;;
     set) domain_set "$@" ;;
+    move|mv|port) domain_move "$@" ;;
     *) die "domain: list | add <домен> [--port P] [--page P|--proxy URL] | set <домен> [--port P] ... | remove <домен> [--port P]";;
   esac
 }
@@ -341,7 +337,8 @@ ${C_BOLD}selfsteal-apps ${SSA_VERSION}${C_RESET} — nginx-маскировка 
 Без аргументов открывается интерактивное меню.
 
 ${C_BOLD}Установка${C_RESET}
-  install [--socket | --tcp --tcp-port 9443] [--public-port 443]   (основной порт Xray inbound)
+  install [--public-port 443] [--email you@x.com]   основной порт Xray inbound
+          [--tcp [--tcp-port 9443]]   только если Xray не видит /dev/shm (по умолчанию — сокеты)
           [--email you@x.com] [--domain D [--page 403|--proxy URL]] [--yes]
   adopt                         перенести существующий nginx-selfsteal (DigneZzZ)
 
@@ -354,15 +351,16 @@ ${C_BOLD}Домены${C_RESET}
                      (если есть wildcard зоны — он подхватывается сам)
   domain set <домен> [--port P] --page P | --proxy URL
   domain remove <домен> [--port P]
+  domain move <домен> [--port СТАРЫЙ] --to НОВЫЙ   перенести на другой публичный порт
   ip [status | on [домен] [--port P] | off] показывать сайт по https://<IP> (по умолчанию выкл — соединение обрывается)
 
 ${C_BOLD}Приложения${C_RESET}
   app list
   app jitsi install [--domain D] [--port P] [--auth|--no-auth] [--http-port 8000] [--jvb-port 10000]
-  app jitsi status | logs [web|prosody|jicofo|jvb] | update [--force] | restart | uninstall
+  app jitsi status | logs [web|prosody|jicofo|jvb] | update [--force] | port <P> | restart | uninstall
   app jitsi user list | add <имя> [пароль] | passwd <имя> [пароль] | del <имя>
   app nextcloud install [--domain D] [--port P] [--admin NAME] [--http-port 8081]
-  app nextcloud status | logs [app|db|redis|cron] | update | restart | uninstall
+  app nextcloud status | logs [app|db|redis|cron] | update | port <P> | restart | uninstall
   app nextcloud user list | add <имя> [пароль] | passwd <имя> [пароль] | del <имя>
   app nextcloud occ <аргументы>              любая команда occ
 

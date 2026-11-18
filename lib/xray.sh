@@ -98,3 +98,15 @@ EOF
   printf '\n%sУ каждого публичного порта свой target: так nginx понимает, на какой порт пришёл клиент.\n' "$C_DIM"
   printf 'Изменения в панели делаете сами — скрипт её не трогает.%s\n' "$C_RESET"
 }
+
+# xray_moved_hint OLD_SITE NEW_SITE — what to change in Remnawave after a port move.
+xray_moved_hint() {
+  local o="$1" n="$2" d op np
+  d="$(site_domain "$n")"; op="$(site_port "$o")"; np="$(site_port "$n")"
+  printf '\n%sВ Remnawave:%s\n' "$C_BOLD" "$C_RESET"
+  printf '  • inbound на порту %s: добавьте %s в serverNames; target: %s (xver %s)\n' \
+    "$np" "$d" "$(port_target "$np")" "$([[ "$PROXY_PROTOCOL" == 1 ]] && echo 1 || echo 0)"
+  if [[ -z "$(list_sites | awk -F@ -v d="$d" -v p="$op" '$1 == d && $2 == p')" ]]; then
+    printf '  • inbound на порту %s: уберите %s из serverNames\n' "$op" "$d"
+  fi
+}

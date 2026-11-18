@@ -255,6 +255,50 @@ domain_set() {
   log "$(site_label "$sid"): $(app_label)"
 }
 
+# domain move DOMAIN [--port OLD] --to NEW — move a site to another public port.
+# App sites (Jitsi, Nextcloud) are moved by the app itself: it must know its new address.
+domain_move() {
+  local d="" p="" to="" sid nsid
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port|--from) p="${2:-}"; shift 2;;
+      --to) to="${2:-}"; shift 2;;
+      -*) die "Неизвестная опция: $1";;
+      *) d="$(lower "$1")"; shift;;
+    esac
+  done
+  pick_site sid "$d" "$p" || return 0
+  load_site "$sid" || die "$sid не найден."
+  if _site_is_app; then
+    app_has "$APP" set_port || die "$(app_title "$APP") не умеет менять порт."
+    "${APP}_set_port" "$to"
+    return
+  fi
+  if [[ -z "$to" ]]; then
+    is_interactive || die "Укажите новый порт: --to <порт>."
+    ask to "Новый публичный порт для $(site_label "$sid")" ""
+  fi
+  valid_public_port "$to" || die "Некорректный публичный порт: '$to' (1-65535, не 80)."
+  [[ "$to" == "$PORT" ]] && { info "$(site_label "$sid") уже на порту $to."; return 0; }
+  nsid="$(site_id "$DOMAIN" "$to")"
+  site_exists "$nsid" && die "$(site_label "$nsid") уже есть. Удалите его или выберите другой порт."
+
+  ensure_port_listener "$to"
+  PORT="$to"
+  save_site
+  rm -f "$(site_file "$sid")"
+  [[ "${IP_DOMAIN:-}" == "$sid" ]] && { IP_DOMAIN="$nsid"; save_config; }
+  if ! apply_config; then
+    # roll back: the record goes back to the old port
+    rm -f "$(site_file "$nsid")"; PORT="$(site_port "$sid")"; save_site
+    [[ "${IP_DOMAIN:-}" == "$nsid" ]] && { IP_DOMAIN="$sid"; save_config; }
+    apply_config || true
+    die "Не удалось применить конфиг — $(site_label "$sid") остался на месте."
+  fi
+  log "$(site_label "$sid") → $(site_label "$nsid")"
+  xray_moved_hint "$sid" "$nsid"
+}
+
 domain_list() {
   local d s n=0
   title "$(ic 🌍)Домены"

@@ -9,6 +9,7 @@
 #   <name>_version            short version for the main screen ("релиз stable-10590")
 #   <name>_logs [service]     follow logs
 #   <name>_update             update to the newest stable release
+#   <name>_set_port PORT      move the app to another public port (no reinstall)
 #   <name>_cmd <sub> [args]   extra subcommands (e.g. users)
 #   <name>_menu_extra         extra interactive menu entries
 #   <name>_nginx_locations    location blocks for the domain's TLS server (uses UPSTREAM)
@@ -111,8 +112,17 @@ apps_status_brief() {
   return 0
 }
 
+# app_new_port VAR CURRENT [GIVEN] — new public port for an app move (asks when not given).
+app_new_port() {
+  local __v="$1" cur="$2" p="${3:-}"
+  [[ -n "$p" ]] || { is_interactive || die "Укажите новый порт."; ask p "Новый публичный порт (сейчас $cur)" ""; }
+  valid_public_port "$p" || die "Некорректный публичный порт: '$p' (1-65535, не 80)."
+  printf -v "$__v" '%s' "$p"
+}
+
 # Bind a site (domain + port) to an app: creates it (with certificate) if needed.
-# If the app was bound to another site before (domain or port changed), that one goes back to a stub.
+# If the app was bound to another site before (domain or port changed), that one goes back to a stub —
+# or, with _SSA_MOVE=1 (port change), is removed: the app simply moved.
 # domain_ensure DOMAIN APP UPSTREAM [PORT]
 domain_ensure() {
   local d="$1" app="$2" upstream="$3" p="${4:-$PUBLIC_PORT}" sid old
@@ -120,8 +130,14 @@ domain_ensure() {
   for old in $(list_sites); do
     [[ "$old" == "$sid" ]] && continue
     if [[ "$( ( load_site "$old" && printf '%s' "$APP" ) )" == "$app" ]]; then
-      ( load_site "$old"; APP="stub"; PAGE="403"; UPSTREAM=""; save_site )
-      info "$(site_label "$old") больше не $(app_title "$app") — теперь там заглушка 403."
+      if [[ "${_SSA_MOVE:-0}" == "1" ]]; then
+        rm -f "$(site_file "$old")"
+        [[ "${IP_DOMAIN:-}" == "$old" ]] && { IP_DOMAIN="$sid"; save_config; }
+        xray_moved_hint "$old" "$sid"
+      else
+        ( load_site "$old"; APP="stub"; PAGE="403"; UPSTREAM=""; save_site )
+        info "$(site_label "$old") больше не $(app_title "$app") — теперь там заглушка 403."
+      fi
     fi
   done
   ensure_port_listener "$p"
@@ -135,7 +151,7 @@ domain_ensure() {
     DOMAIN="$d"; PORT="$p"; APP="$app"; PAGE="403"; UPSTREAM="$upstream"; CERT_SOURCE="${cert_src:-acme}"; ADDED_AT="$(date +%F)"
     save_site
     apply_config || { rm -f "$(site_file "$sid")"; die "Не удалось применить конфиг для $(site_label "$sid")."; }
-    xray_domain_hint "$d" "$p"
+    [[ "${_SSA_MOVE:-0}" == "1" ]] || xray_domain_hint "$d" "$p"   # a move prints its own hint
   fi
   domain_obtain_cert "$d" auto
   apply_config
@@ -172,6 +188,10 @@ app_cmd() {
   app_known "$name" || die "Неизвестное приложение: $name. Доступны: $(available_apps | tr '\n' ' ')"
   local sub="${1:-status}"; shift || true
   case "$sub" in
+    port)
+      app_has "$name" set_port || die "$name: смена порта не поддерживается."
+      "${name}_set_port" "$@"
+      ;;
     install|uninstall|status|logs|update)
       [[ "$sub" == install ]] || app_has "$name" "$sub" || die "$name: команда $sub не поддерживается."
       [[ "$sub" == install ]] && { is_installed || die "Сначала установите ядро: selfsteal-apps install"; }

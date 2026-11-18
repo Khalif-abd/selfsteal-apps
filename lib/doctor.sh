@@ -194,6 +194,8 @@ doctor_check() {
   else _doc_warn "${C_YELLOW}задание продления selfsteal-apps пропало из cron${C_RESET} (его удаляет установщик DigneZzZ) — восстановить: selfsteal-apps cert renew"
   fi
 
+  is_installed && _doc_links
+
   printf '\n %s%sПорты%s\n' "$C_BOLD" "$(ic 🔌)" "$C_RESET"
   if [[ -n "$xp" ]]; then
     for p in $xp; do _doc_ok "TCP/$p — $(port_owner_tcp "$p" | tr -d '"')"; done
@@ -206,6 +208,48 @@ doctor_check() {
   fi
 
   [[ -z "$bad" ]]
+}
+
+# nginx log of the last 24h with docker timestamps (empty if unavailable).
+_doc_nginx_log() { docker logs --timestamps --since 24h "$CONTAINER" 2>&1 || true; }
+
+# "2026-11-18T23:19:59.123Z ..." -> "18.11 23:19"
+_doc_when() { sed -E 's/^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}:[0-9]{2}).*/\3.\2 \4/' <<<"$1"; }
+
+# Per public port: is there an Xray inbound, does it speak proxy protocol, does anything arrive.
+_doc_links() {
+  local log xp p names listen bh nbh last reqs nreq
+  log="$(_doc_nginx_log)"
+  xp=" $(xray_ports | tr '\n' ' ') "
+  printf '\n %s%sСвязь Xray → nginx%s  %s(за сутки, по логам nginx)%s\n' "$C_BOLD" "$(ic 🧷)" "$C_RESET" "$C_DIM" "$C_RESET"
+  for p in $(site_ports); do
+    names="$(list_sites | awk -F@ -v p="$p" '$2 == p { n++; if (n <= 3) l = l (n > 1 ? ", " : "") $1 }
+      END { if (n > 3) l = l " и ещё " (n - 3); print l }')"
+    [[ -n "$names" ]] || continue
+    listen="$(port_listen "$p")"
+    if [[ "$xp" != "  " && "$xp" != *" $p "* ]]; then
+      _doc_bad "${C_RED}порт $p: Xray его не слушает${C_RESET}, а на нём домены: $names — inbound на этом порту не создан или у него другой порт"
+      continue
+    fi
+    if [[ "$PROXY_PROTOCOL" == "1" ]]; then
+      bh="$(grep -F "while reading PROXY protocol" <<<"$log" | grep -F "server: $listen" || true)"
+      nbh="$(grep -c . <<<"$bh" || true)"
+      if (( nbh > 0 )); then
+        last="$(_doc_when "$(tail -1 <<<"$bh")")"
+        _doc_bad "${C_RED}порт $p: inbound присылает трафик без proxy protocol${C_RESET} ($nbh раз, последний $last) — в его realitySettings нужен \"xver\": 1"
+        continue
+      fi
+    fi
+    reqs="$(grep -E " port=${p}\$" <<<"$log" || true)"
+    nreq="$(grep -c . <<<"$reqs" || true)"
+    if (( nreq > 0 )); then
+      _doc_ok "порт $p: запросов $nreq, последний $(_doc_when "$(tail -1 <<<"$reqs")") ($names)"
+    else
+      _doc_warn "порт $p: за сутки ни одного запроса ($names)."
+      printf '      %sОткройте %s в браузере и запустите проверку снова. Если и после этого пусто —\n' "$C_DIM" "$(public_url "${names%%,*}" "$p")"
+      printf '      у inbound на порту %s неверный target, нужен: %s%s\n' "$p" "$(port_target "$p")" "$C_RESET"
+    fi
+  done
 }
 
 doctor_cmd() {

@@ -299,6 +299,24 @@ nextcloud_update() {
   log "Nextcloud обновлён: $N_MAJOR (stable: $stable)."
 }
 
+# nextcloud port NEW — move Nextcloud to another public port: new OVERWRITEHOST, app recreated, site moved.
+nextcloud_set_port() {
+  nextcloud_installed || die "Nextcloud не установлен."
+  _n_load
+  local new old="$N_PORT"
+  app_new_port new "$old" "${1:-}"
+  [[ "$new" == "$old" ]] && { info "Nextcloud уже на порту $new."; return 0; }
+  _app_domain_conflict nextcloud "$N_DOMAIN" "$new"
+  N_PORT="$new"
+  _n_write_env
+  _n_save
+  info "Перезапускаю Nextcloud с новым адресом $(_n_url)..."
+  _n_compose --progress quiet up -d --remove-orphans || die "docker compose up не удался."
+  _n_wait_ready
+  _SSA_MOVE=1 domain_ensure "$N_DOMAIN" nextcloud "http://127.0.0.1:${N_HTTP_PORT}" "$N_PORT"
+  log "Nextcloud теперь: $(_n_url)"
+}
+
 nextcloud_uninstall() {
   nextcloud_installed || { info "Nextcloud не установлен."; return 0; }
   _n_load
