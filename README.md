@@ -56,8 +56,10 @@ sudo selfsteal-apps cert renew                         # продлить, у к
 sudo selfsteal-apps cert manual meet.example.com fullchain.pem privkey.pem   # свой/wildcard
 
 # сервис
-sudo selfsteal-apps status | logs | restart | down | xray | uninstall [--purge]
-sudo selfsteal-apps update          # только скрипт
+sudo selfsteal-apps status | logs | down | xray | uninstall [--purge]
+sudo selfsteal-apps apply           # пересобрать конфиг и перечитать его без перезапуска nginx
+sudo selfsteal-apps restart         # то же, но с пересозданием контейнера
+sudo selfsteal-apps update          # только скрипт (после него — apply, без перезапуска nginx)
 sudo selfsteal-apps nginx version   # какая версия nginx запущена
 sudo selfsteal-apps nginx update    # только nginx: скачать образ, проверить конфиг на нём, пересоздать
 ```
@@ -66,10 +68,39 @@ nginx берётся из образа `nginx:stable-alpine` (сборки nginx
 чем в пакеты дистрибутивов). `restart` образ не скачивает — он вызывается при каждом изменении домена и должен
 работать без Docker Hub. `update` обновляет только сам скрипт; свежий nginx ставится отдельно — `nginx update`.
 
+### Несколько портов (несколько inbound в Xray)
+
+Сайт — это **домен + публичный порт** (порт Xray inbound, на который приходит клиент). У каждого порта свой
+слушатель nginx, поэтому один домен может отдавать разное на разных портах, а разные домены — жить на своих портах:
+
+```bash
+sudo selfsteal-apps domain add meet.example.com --port 444 --page 404        # тот же домен, другой порт
+sudo selfsteal-apps app jitsi install --domain meet.example.com --port 444   # Jitsi на :444
+sudo selfsteal-apps domain set meet.example.com --port 444 --page 502
+sudo selfsteal-apps domain remove meet.example.com --port 444                # сертификат остаётся, пока есть другие порты
+sudo selfsteal-apps xray                                                     # target и serverNames для каждого inbound
+```
+
+| Публичный порт | Xray `target` (сокеты) | Xray `target` (tcp) |
+|---|---|---|
+| основной (`--public-port`, обычно 443) | `/dev/shm/nginx.sock` | `127.0.0.1:9443` |
+| любой другой, например 444 | `/dev/shm/nginx-444.sock` | следующий свободный, например `127.0.0.1:9444` |
+
+- У каждого inbound в Remnawave свой `target` — по нему nginx понимает, на какой порт пришёл клиент.
+  `selfsteal-apps xray` печатает готовые `realitySettings` для каждого порта.
+- Сертификат принадлежит домену и общий для всех его портов.
+- Приложение (Jitsi, Nextcloud) живёт на одном адресе: `--port` при установке, при смене порта или домена
+  старый адрес становится заглушкой 403. Адреса в приложениях (`PUBLIC_URL`, `OVERWRITEHOST`) и редирект
+  http→https подставляются сами.
+- По одному порту на один домен — одно содержимое. Разные приложения на разных портах одного домена работают,
+  но cookies браузер делит по домену, поэтому надёжнее разные поддомены.
+- Основной порт меняется только переустановкой без доменов. Установки ≤0.6 переносятся автоматически:
+  все домены оказываются на основном порту, настройки Xray менять не нужно.
+
 ### Доступ по IP
 
 ```bash
-sudo selfsteal-apps ip on meet.example.com   # https://<IP> показывает сайт этого домена
+sudo selfsteal-apps ip on meet.example.com [--port 444]   # https://<IP>[:444] показывает сайт этого домена
 sudo selfsteal-apps ip off                   # по умолчанию: соединение без известного домена обрывается
 sudo selfsteal-apps ip                       # текущий режим
 ```
@@ -238,10 +269,10 @@ sudo selfsteal-apps cert import /root/selfsteal-cert-star.example.com-<дата>
 | `/usr/local/lib/selfsteal-apps/` | код (обновляется `update`) |
 | `/usr/local/bin/selfsteal-apps` | команда (симлинк) |
 | `/etc/selfsteal-apps/config.env` | настройки (режим, порты, email) |
-| `/etc/selfsteal-apps/domains/*.env` | по файлу на домен |
+| `/etc/selfsteal-apps/domains/<домен>@<порт>.env` | по файлу на сайт (домен + публичный порт) |
 | `/etc/selfsteal-apps/acme/` | acme.sh и его данные |
 | `/opt/selfsteal-apps/apps/<имя>/` | данные приложений |
-| `/opt/selfsteal-apps/nginx/` | docker-compose, nginx.conf, `conf.d/sites/<домен>.conf` |
+| `/opt/selfsteal-apps/nginx/` | docker-compose, nginx.conf, `conf.d/sites/<домен>.conf` (все порты домена) — пересоздаются при каждом изменении, руками не править |
 | `/opt/selfsteal-apps/nginx/ssl/` | сертификаты: `<домен>/` и `star.<зона>/` (wildcard) |
 | `/etc/selfsteal-apps/cloudflare/` | токены Cloudflare по зонам |
 | `/var/log/selfsteal-apps.log` | журнал действий скрипта |

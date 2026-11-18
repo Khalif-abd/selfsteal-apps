@@ -62,7 +62,7 @@ adopt_cmd() {
   [[ -n "$PUBLIC_IP" ]] || PUBLIC_IP="$(detect_public_ip || true)"
   save_config
 
-  DOMAIN="$d"; APP="$app"; PAGE="403"; UPSTREAM="$upstream"; ADDED_AT="$(date +%F)"
+  DOMAIN="$d"; PORT="$PUBLIC_PORT"; APP="$app"; PAGE="403"; UPSTREAM="$upstream"; ADDED_AT="$(date +%F)"
   if [[ -s "$crt" && -s "$key" ]]; then
     CERT_SOURCE="acme"   # will be re-issued by our acme.sh below
     install -d -m 700 "$NGINX_SSL/$d"

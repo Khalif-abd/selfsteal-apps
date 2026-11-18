@@ -29,7 +29,7 @@ xray_ports() {
 # Xray ports, or PUBLIC_PORT when Xray is not visible (e.g. in docker behind docker-proxy).
 doctor_xray_ports() {
   local p; p="$(xray_ports)"
-  if [[ -n "$p" ]]; then printf '%s\n' "$p"; else printf '%s\n' "${PUBLIC_PORT:-443}"; fi
+  if [[ -n "$p" ]]; then printf '%s\n' "$p"; else site_ports; fi
 }
 
 # All NAT redirects with a single destination port, normalized:
@@ -151,7 +151,7 @@ doctor_check() {
   jobs="$(old_renew_jobs)"
   xp="$(xray_ports | paste -sd' ' -)"
   if [[ -n "$xp" ]]; then src="Xray слушает: ${xp// /, }"
-  else src="Xray не найден среди процессов — проверяю публичный порт ${PUBLIC_PORT:-443}"; fi
+  else src="Xray не найден среди процессов — проверяю порты сайтов: $(site_ports | paste -sd, -)"; fi
 
   printf '\n %s%sNAT-перенаправления%s  %s(%s)%s\n' "$C_BOLD" "$(ic 🔀)" "$C_RESET" "$C_DIM" "$src" "$C_RESET"
   local kind loc dp to rule
@@ -198,16 +198,18 @@ doctor_check() {
   if [[ -n "$xp" ]]; then
     for p in $xp; do _doc_ok "TCP/$p — $(port_owner_tcp "$p" | tr -d '"')"; done
   else
-    p="${PUBLIC_PORT:-443}"; owner="$(port_owner_tcp "$p" | tr -d '"')"
-    if port_in_use_tcp "$p"; then _doc_ok "TCP/$p слушает ${owner:-процесс}"
-    else _doc_warn "TCP/$p никто не слушает — Xray запущен?"; fi
+    for p in $(site_ports); do
+      owner="$(port_owner_tcp "$p" | tr -d '"')"
+      if port_in_use_tcp "$p"; then _doc_ok "TCP/$p слушает ${owner:-процесс}"
+      else _doc_warn "TCP/$p никто не слушает — Xray запущен? (на этом порту есть сайты)"; fi
+    done
   fi
 
   [[ -z "$bad" ]]
 }
 
 doctor_cmd() {
-  title "Диагностика"
+  title "$(ic 🩺)Диагностика"
   local fix=0   # interactive: asks before each fix; non-interactive: only with --fix
   [[ "${1:-}" == "--fix" ]] && { fix=1; ASSUME_YES=1; }
   is_interactive && fix=1

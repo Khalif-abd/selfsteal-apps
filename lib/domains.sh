@@ -19,7 +19,7 @@ app_label() {
   case "$APP" in
     stub)  printf 'заглушка: %s' "$(page_label "$PAGE")";;
     proxy) printf 'прокси -> %s' "$UPSTREAM";;
-    *)     printf '%s' "$APP";;
+    *)     printf '%s' "$(app_title "$APP")";;
   esac
 }
 
@@ -78,11 +78,26 @@ domain_obtain_cert() {
   return 0
 }
 
-# domain_add DOMAIN [--page P | --proxy URL] [--wildcard [--cf-token T --cf-zone-id ID] | --http | --cert F --key K | --no-cert]
+# Port of a new site: --port, else ask (interactive), else PUBLIC_PORT.
+_ask_public_port() {
+  local __v="$1" given="${2:-}" p
+  if [[ -n "$given" ]]; then p="$given"
+  elif is_interactive; then ask p "Публичный порт (порт Xray inbound, куда приходит клиент)" "$PUBLIC_PORT"
+  else p="$PUBLIC_PORT"
+  fi
+  valid_public_port "$p" || die "Некорректный публичный порт: '$p' (1-65535, не 80)."
+  printf -v "$__v" '%s' "$p"
+}
+
+# Is the loaded site taken by an app plugin (jitsi, nextcloud, ...)?
+_site_is_app() { [[ "$APP" != stub && "$APP" != proxy ]]; }
+
+# domain_add DOMAIN [--port P] [--page P | --proxy URL] [--wildcard [--cf-token T --cf-zone-id ID] | --http | --cert F --key K | --no-cert]
 domain_add() {
-  local d="" page="" upstream="" crt="" key="" mode="auto" token="" zid=""
+  local d="" page="" upstream="" crt="" key="" mode="auto" token="" zid="" port_arg="" port sid
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --port) port_arg="${2:-}"; shift 2;;
       --page) page="${2:-}"; shift 2;;
       --proxy) upstream="${2:-}"; shift 2;;
       --cert) crt="${2:-}"; shift 2;;
@@ -100,9 +115,13 @@ domain_add() {
   [[ -n "$d" ]] || ask d "Домен (например meet.example.com)"
   d="$(lower "$d")"
   valid_domain "$d" || die "Некорректный домен: '$d'"
-  domain_exists "$d" && die "Домен $d уже добавлен. Используйте 'domain set'."
+  _ask_public_port port "$port_arg"
+  sid="$(site_id "$d" "$port")"
+  site_exists "$sid" && die "$(site_label "$sid") уже добавлен. Изменить: selfsteal-apps domain set $d --port $port"
 
-  DOMAIN="$d"; APP="stub"; PAGE="403"; UPSTREAM=""; CERT_SOURCE="acme"; ADDED_AT="$(date +%F)"
+  local had_domain=0; domain_exists "$d" && had_domain=1
+  local cert_src="acme"; (( had_domain )) && cert_src="$(_domain_field "$d" CERT_SOURCE)"
+  DOMAIN="$d"; PORT="$port"; APP="stub"; PAGE="403"; UPSTREAM=""; CERT_SOURCE="${cert_src:-acme}"; ADDED_AT="$(date +%F)"
 
   if [[ -n "$upstream" ]]; then
     valid_upstream "$upstream" || die "Некорректный upstream: $upstream (пример: http://127.0.0.1:8000)"
@@ -112,7 +131,7 @@ domain_add() {
     PAGE="$page"
   elif is_interactive; then
     local kind
-    choose kind "Что будет на домене?" 1 \
+    choose kind "Что будет на $(site_label "$sid")?" 1 \
       "Заглушка nginx (403/404/502/503/welcome)" \
       "Прокси на локальный сервис (http://127.0.0.1:PORT)"
     if [[ "$kind" == Прокси* ]]; then
@@ -125,44 +144,92 @@ domain_add() {
   fi
 
   [[ -n "$crt" || -n "$key" ]] && CERT_SOURCE="manual"
-  save_domain
-  apply_config || { rm -f "$(domain_file "$d")"; die "Не удалось применить конфиг — домен не добавлен."; }
+  ensure_port_listener "$port"
+  save_site
+  apply_config || { rm -f "$(site_file "$sid")"; die "Не удалось применить конфиг — $(site_label "$sid") не добавлен."; }
 
-  if [[ "$CERT_SOURCE" == "manual" ]]; then
+  if [[ "$CERT_SOURCE" == "manual" && -n "$crt$key" ]]; then
     install_manual_cert "$d" "$crt" "$key"
+  elif (( had_domain )) && has_cert "$d"; then
+    info "Сертификат $d уже есть — он общий для всех портов домена."
   else
     domain_obtain_cert "$d" "$mode" "$token" "$zid"
   fi
   apply_config
 
-  log "Домен $d добавлен: $(load_domain "$d"; app_label)"
-  xray_domain_hint "$d"
+  log "Добавлен $(site_label "$sid"): $(load_site "$sid"; app_label)"
+  xray_domain_hint "$d" "$port"
 }
 
+# pick_site VAR [DOMAIN] [PORT] — resolve a site; asks when a domain has several ports.
+pick_site() {
+  local __v="$1" d="${2:-}" p="${3:-}" ss labels=() s c
+  if [[ -n "$d" && -n "$p" ]]; then
+    site_exists "$(site_id "$d" "$p")" || die "$d на порту $p не найден."
+    printf -v "$__v" '%s' "$(site_id "$d" "$p")"; return 0
+  fi
+  if [[ -n "$d" ]]; then
+    mapfile -t ss < <(sites_of "$d")
+    (( ${#ss[@]} )) || die "Домен $d не найден."
+  else
+    mapfile -t ss < <(list_sites)
+    (( ${#ss[@]} )) || { info "Доменов нет."; return 1; }
+  fi
+  if (( ${#ss[@]} == 1 )); then printf -v "$__v" '%s' "${ss[0]}"; return 0; fi
+  is_interactive || die "У $d несколько портов ($(printf '%s\n' "${ss[@]}" | cut -d@ -f2 | paste -sd, -)) — укажите --port."
+  for s in "${ss[@]}"; do labels+=("$(site_label "$s")  —  $(load_site "$s"; app_label)"); done
+  choose c "Какой" 1 "${labels[@]}"
+  for s in "${!labels[@]}"; do [[ "${labels[$s]}" == "$c" ]] && { printf -v "$__v" '%s' "${ss[$s]}"; return 0; }; done
+  return 1
+}
+
+# domain remove DOMAIN [--port P]
 domain_remove() {
-  local d="${1:-}"
-  [[ -n "$d" ]] || { pick_domain d || return 0; }
-  domain_exists "$d" || die "Домен $d не найден."
-  confirm "Удалить $d (конфиг и сертификат)?" n || return 0
-  rm -f "$(domain_file "$d")"
-  remove_cert "$d"
-  apply_config
-  log "Домен $d удалён. Не забудьте убрать его из serverNames в Remnawave."
-}
-
-# domain_set DOMAIN [--page P | --proxy URL]
-domain_set() {
-  local d="" page="" upstream=""
+  local d="" p="" sid
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --port) p="${2:-}"; shift 2;;
+      -*) die "Неизвестная опция: $1";;
+      *) d="$(lower "$1")"; shift;;
+    esac
+  done
+  pick_site sid "$d" "$p" || return 0
+  d="$(site_domain "$sid")"
+  load_site "$sid"
+  if _site_is_app; then
+    die "На $(site_label "$sid") работает $(app_title "$APP"). Сначала удалите приложение: selfsteal-apps app $APP uninstall"
+  fi
+  local last=0; [[ "$(sites_of "$d" | wc -l)" -eq 1 ]] && last=1
+  if (( last )); then
+    confirm "Удалить $(site_label "$sid") (конфиг и сертификат домена)?" n || return 0
+  else
+    confirm "Удалить $(site_label "$sid")? Другие порты домена и сертификат останутся." n || return 0
+  fi
+  rm -f "$(site_file "$sid")"
+  apply_config
+  # only after nginx no longer references it: a reload must never see a config pointing to deleted files
+  (( last )) && remove_cert "$d"
+  log "Удалён $(site_label "$sid"). Не забудьте убрать $d из serverNames inbound на порту $(site_port "$sid") в Remnawave."
+}
+
+# domain set DOMAIN [--port P] --page P | --proxy URL
+domain_set() {
+  local d="" p="" page="" upstream="" sid
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port) p="${2:-}"; shift 2;;
       --page) page="${2:-}"; shift 2;;
       --proxy) upstream="${2:-}"; shift 2;;
       -*) die "Неизвестная опция: $1";;
-      *) d="$1"; shift;;
+      *) d="$(lower "$1")"; shift;;
     esac
   done
-  [[ -n "$d" ]] || { pick_domain d || return 0; }
-  load_domain "$d" || die "Домен $d не найден."
+  pick_site sid "$d" "$p" || return 0
+  load_site "$sid" || die "$sid не найден."
+  if _site_is_app; then
+    warn "На $(site_label "$sid") сейчас работает $(app_title "$APP") — после изменения он перестанет открываться по этому адресу."
+    confirm "Всё равно изменить?" n || return 0
+  fi
 
   if [[ -n "$upstream" ]]; then
     valid_upstream "$upstream" || die "Некорректный upstream: $upstream"
@@ -172,7 +239,7 @@ domain_set() {
     APP="stub"; PAGE="$page"; UPSTREAM=""
   elif is_interactive; then
     local kind
-    choose kind "Что отдавать на $d? (сейчас: $(app_label))" 1 \
+    choose kind "Что отдавать на $(site_label "$sid")? (сейчас: $(app_label))" 1 \
       "Заглушка nginx" "Прокси на локальный сервис"
     if [[ "$kind" == Прокси* ]]; then
       APP="proxy"; ask UPSTREAM "Upstream" "${UPSTREAM:-http://127.0.0.1:8000}"
@@ -183,24 +250,27 @@ domain_set() {
   else
     die "Укажите --page или --proxy."
   fi
-  save_domain
+  save_site
   apply_config
-  log "$d: $(app_label)"
+  log "$(site_label "$sid"): $(app_label)"
 }
 
 domain_list() {
-  local d n=0
-  title "Домены"
+  local d s n=0
+  title "$(ic 🌍)Домены"
   for d in $(list_domains); do
-    load_domain "$d" || continue
     n=$((n+1))
-    printf ' %s%-34s%s %s\n' "$C_BOLD" "$d" "$C_RESET" "$(app_label)"
-    printf '   %-34s TLS: %s\n' "" "$(cert_summary "$d")"
+    printf ' %s%s%s\n' "$C_BOLD" "$d" "$C_RESET"
+    printf '   TLS: %s\n' "$(cert_summary "$d")"
+    for s in $(sites_of "$d"); do
+      load_site "$s" || continue
+      printf '   порт %-6s → %s\n' "$PORT" "$(app_label)"
+    done
   done
   (( n )) || info "Доменов пока нет. Добавьте: selfsteal-apps domain add <домен>"
 }
 
-# pick_domain VAR — interactive selection; returns 1 if nothing to pick.
+# pick_domain VAR — interactive selection of a domain (certificates); returns 1 if nothing to pick.
 pick_domain() {
   local __v="$1" ds
   mapfile -t ds < <(list_domains)

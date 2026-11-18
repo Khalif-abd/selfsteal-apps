@@ -67,26 +67,34 @@ check_xray_socket_access() {
   (( found )) || info "Контейнер Xray/remnanode не найден. Если Xray в Docker — смонтируйте /dev/shm:/dev/shm."
 }
 
+# xray_domain_hint DOMAIN [PORT]
 xray_domain_hint() {
-  local d="$1"
-  printf '\n%sВ Remnawave (профиль ноды, realitySettings) добавьте домен в serverNames:%s %s\n' "$C_DIM" "$C_RESET" "$d"
+  local d="$1" p="${2:-$PUBLIC_PORT}"
+  printf '\n%sВ Remnawave: inbound на порту %s — добавьте %s в serverNames; его target: %s (xver %s).%s\n' \
+    "$C_DIM" "$p" "$d" "$(port_target "$p")" "$([[ "$PROXY_PROTOCOL" == 1 ]] && echo 1 || echo 0)" "$C_RESET"
 }
 
+# One realitySettings block per public port: each Xray inbound points to its own nginx listener.
 xray_hint() {
-  local names=() d
-  for d in $(list_domains); do names+=("\"$d\""); done
-  local joined; joined="$(IFS=,; echo "${names[*]:-\"your.domain\"}")"
-  joined="${joined//,/, }"
+  local p names joined n=0
   title "Настройки Reality inbound (Remnawave → Config Profiles)"
-  cat <<EOF
+  for p in $(site_ports); do
+    names="$(list_sites | awk -F@ -v p="$p" '$2 == p { printf "%s\"%s\"", (n++ ? ", " : ""), $1 }')"
+    [[ -n "$names" || "$p" == "$PUBLIC_PORT" ]] || continue
+    n=$((n+1))
+    joined="${names:-\"your.domain\"}"
+    printf '\n%sInbound на порту %s%s%s\n' "$C_BOLD" "$p" "$([[ "$p" == "$PUBLIC_PORT" ]] && echo " (основной)")" "$C_RESET"
+    cat <<EOF
 "realitySettings": {
   "show": false,
   "xver": $( [[ "$PROXY_PROTOCOL" == "1" ]] && echo 1 || echo 0 ),
-  "target": "$(xray_target)",
+  "target": "$(port_target "$p")",
   "serverNames": [${joined}],
   "privateKey": "...",
   "shortIds": ["..."]
 }
 EOF
-  printf '\n%sПубличный порт inbound: %s. Изменения в панели делаете сами — скрипт её не трогает.%s\n' "$C_DIM" "$PUBLIC_PORT" "$C_RESET"
+  done
+  printf '\n%sУ каждого публичного порта свой target: так nginx понимает, на какой порт пришёл клиент.\n' "$C_DIM"
+  printf 'Изменения в панели делаете сами — скрипт её не трогает.%s\n' "$C_RESET"
 }

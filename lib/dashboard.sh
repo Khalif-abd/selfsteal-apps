@@ -72,15 +72,16 @@ dash_header() {
 _dash_nginx() {
   local v mode
   v="$(container_running && nginx_version || true)"
-  if [[ "$LISTEN_MODE" == socket ]]; then mode="сокет $SOCKET_PATH"; else mode="tcp 127.0.0.1:$TCP_PORT"; fi
-  printf ' %snginx %s%s%s  %s(%s)%s · %s\n' "$(ic 🧩)" "$C_BOLD" "${v:-?}" "$C_RESET" \
-    "$C_DIM" "$NGINX_IMAGE" "$C_RESET" "$mode"
+  if [[ "$LISTEN_MODE" == socket ]]; then mode="сокеты"; else mode="tcp"; fi
+  printf ' %snginx %s%s%s  %s(%s)%s · порты Xray: %s · %s\n' "$(ic 🧩)" "$C_BOLD" "${v:-?}" "$C_RESET" \
+    "$C_DIM" "$NGINX_IMAGE" "$C_RESET" "$(site_ports | paste -sd, - | sed 's/,/, /g')" "$mode"
 }
 
 _dash_ip() {
-  local d ip="${PUBLIC_IP:-<IP>}"
-  if d="$(ip_access_domain)"; then
-    printf ' %sДоступ по IP: %sвключён%s — https://%s открывает сайт %s\n' "$(ic 🌐)" "$C_GREEN" "$C_RESET" "$ip" "$d"
+  local s ip="${PUBLIC_IP:-<IP>}"
+  if s="$(ip_access_site)"; then
+    printf ' %sДоступ по IP: %sвключён%s — %s открывает сайт %s\n' "$(ic 🌐)" "$C_GREEN" "$C_RESET" \
+      "$(public_url "$ip" "$(site_port "$s")")" "$(site_label "$s")"
   elif [[ "${IP_ACCESS:-0}" == "1" ]]; then
     printf ' %sДоступ по IP: %sвключён, но нет домена с сертификатом%s — соединения обрываются\n' \
       "$(ic 🌐)" "$C_YELLOW" "$C_RESET"
@@ -90,18 +91,20 @@ _dash_ip() {
 }
 
 _dash_domains() {
-  local d rows=() problems=0 total=0 w=12 state days line target
-  for d in $(list_domains); do
-    load_domain "$d" || continue
+  local d sid rows=() problems=0 total=0 ndom w=12 state days line target
+  ndom="$(list_domains | grep -c . || true)"
+  for sid in $(list_sites); do
+    load_site "$sid" || continue
+    d="$DOMAIN"
     total=$((total+1))
     IFS=$'\t' read -r state days < <(_dash_cert "$d")
     target="$(_dash_target)"
     [[ "$(domain_cert_name "$d")" == star.* ]] && target+=" · wildcard"
     # sort key: problems first, then by name
     if [[ "$state" == ok ]]; then line="1"; else line="0"; problems=$((problems+1)); fi
-    rows+=("${line}"$'\t'"${d}"$'\t'"${state}"$'\t'"${days}"$'\t'"${target}")
+    rows+=("${line}"$'\t'"$(site_label "$sid")"$'\t'"${state}"$'\t'"${days}"$'\t'"${target}")
   done
-  printf '\n %s%sДомены (%d)%s' "$C_BOLD" "$(ic 🌍)" "$total" "$C_RESET"
+  printf '\n %s%sДомены (%d)%s' "$C_BOLD" "$(ic 🌍)" "$ndom" "$C_RESET"
   if (( total == 0 )); then
     printf '\n   %sпока нет — добавьте в разделе «Домены»%s\n' "$C_DIM" "$C_RESET"
     return

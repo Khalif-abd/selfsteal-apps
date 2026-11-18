@@ -2,6 +2,7 @@
 # Application plugins: apps/<name>/app.sh
 #
 # A plugin sets <name>_TITLE / <name>_DESC and defines (all optional except install):
+# <name>_ICON — menu emoji (wide, without VS16).
 #   <name>_install [args]     install or reconfigure (idempotent)
 #   <name>_uninstall          remove the app, keep the domain (back to a stub)
 #   <name>_status             print status
@@ -38,6 +39,7 @@ app_has()   { declare -F "${1}_$2" >/dev/null; }
 
 app_title() { local v="${1}_TITLE"; printf '%s' "${!v:-$1}"; }
 app_desc()  { local v="${1}_DESC";  printf '%s' "${!v:-}"; }
+app_icon()  { local v="${1}_ICON";  printf '%s' "${!v:-📦}"; }
 
 app_installed() { app_has "$1" installed && "${1}_installed"; }
 
@@ -60,15 +62,30 @@ app_check_memory() {
   fi
 }
 
-# One domain = one app.
+# One site (domain + port) = one app.
+# _app_domain_conflict APP DOMAIN [PORT]
 _app_domain_conflict() {
-  local a="$1" d="$2" cur
-  domain_exists "$d" || return 0
-  cur="$(_domain_field "$d" APP)"
+  local a="$1" d="$2" p="${3:-$PUBLIC_PORT}" sid cur
+  sid="$(site_id "$d" "$p")"
+  site_exists "$sid" || return 0
+  cur="$( ( load_site "$sid" && printf '%s' "$APP" ) )"
   case "$cur" in
     stub|proxy|"$a"|"") return 0 ;;
-    *) die "Домен $d уже занят приложением $(app_title "$cur"). Выберите другой домен." ;;
+    *) die "$(site_label "$sid") уже занят приложением $(app_title "$cur"). Выберите другой домен или порт." ;;
   esac
+}
+
+# Public port for an app: --port, else the port it already has, else ask / PUBLIC_PORT.
+# app_public_port VAR GIVEN CURRENT
+app_public_port() {
+  local __v="$1" given="${2:-}" cur="${3:-}" p
+  if [[ -n "$given" ]]; then p="$given"
+  elif [[ -n "$cur" ]]; then p="$cur"
+  elif is_interactive; then ask p "Публичный порт (порт Xray inbound)" "$PUBLIC_PORT"
+  else p="$PUBLIC_PORT"
+  fi
+  valid_public_port "$p" || die "Некорректный публичный порт: '$p' (1-65535, не 80)."
+  printf -v "$__v" '%s' "$p"
 }
 
 # Memory used by an app's compose project, in MiB.
@@ -89,43 +106,56 @@ apps_status_brief() {
     (( any )) || title "Приложения"
     any=1
     d=""; app_has "$a" brief && d="$("${a}_brief")"
-    printf ' %s%-14s%s %-32s RAM: ~%s МБ\n' "$C_BOLD" "$(app_title "$a")" "$C_RESET" "${d:+https://$d}" "$(app_mem_usage "$a")"
+    printf ' %s%-14s%s %-36s RAM: ~%s МБ\n' "$C_BOLD" "$(app_title "$a")" "$C_RESET" "$d" "$(app_mem_usage "$a")"
   done
   return 0
 }
 
-# Bind a domain to an app: creates the domain (with certificate) if needed.
+# Bind a site (domain + port) to an app: creates it (with certificate) if needed.
+# If the app was bound to another site before (domain or port changed), that one goes back to a stub.
+# domain_ensure DOMAIN APP UPSTREAM [PORT]
 domain_ensure() {
-  local d="$1" app="$2" upstream="$3"
-  if domain_exists "$d"; then
-    load_domain "$d"
+  local d="$1" app="$2" upstream="$3" p="${4:-$PUBLIC_PORT}" sid old
+  sid="$(site_id "$d" "$p")"
+  for old in $(list_sites); do
+    [[ "$old" == "$sid" ]] && continue
+    if [[ "$( ( load_site "$old" && printf '%s' "$APP" ) )" == "$app" ]]; then
+      ( load_site "$old"; APP="stub"; PAGE="403"; UPSTREAM=""; save_site )
+      info "$(site_label "$old") больше не $(app_title "$app") — теперь там заглушка 403."
+    fi
+  done
+  ensure_port_listener "$p"
+  if site_exists "$sid"; then
+    load_site "$sid"
     APP="$app"; UPSTREAM="$upstream"
-    save_domain
+    save_site
     apply_config
   else
-    DOMAIN="$d"; APP="$app"; PAGE="403"; UPSTREAM="$upstream"; CERT_SOURCE="acme"; ADDED_AT="$(date +%F)"
-    save_domain
-    apply_config || { rm -f "$(domain_file "$d")"; die "Не удалось применить конфиг для $d."; }
-    xray_domain_hint "$d"
+    local cert_src="acme"; domain_exists "$d" && cert_src="$(_domain_field "$d" CERT_SOURCE)"
+    DOMAIN="$d"; PORT="$p"; APP="$app"; PAGE="403"; UPSTREAM="$upstream"; CERT_SOURCE="${cert_src:-acme}"; ADDED_AT="$(date +%F)"
+    save_site
+    apply_config || { rm -f "$(site_file "$sid")"; die "Не удалось применить конфиг для $(site_label "$sid")."; }
+    xray_domain_hint "$d" "$p"
   fi
   domain_obtain_cert "$d" auto
   apply_config
 }
 
-# Return a domain to a neutral stub when its app goes away.
+# Return the sites of DOMAIN served by APP to a neutral stub when the app goes away.
 domain_release() {
-  local d="$1" app="$2"
-  domain_exists "$d" || return 0
-  load_domain "$d"
-  [[ "$APP" == "$app" ]] || return 0
-  APP="stub"; PAGE="403"; UPSTREAM=""
-  save_domain
+  local d="$1" app="$2" s
+  for s in $(sites_of "$d"); do
+    load_site "$s" || continue
+    [[ "$APP" == "$app" ]] || continue
+    APP="stub"; PAGE="403"; UPSTREAM=""
+    save_site
+    info "$(site_label "$s") теперь отдаёт заглушку 403."
+  done
   apply_config
-  info "$d теперь отдаёт заглушку 403."
 }
 
 app_list() {
-  title "Приложения"
+  title "$(ic 📦)Приложения"
   local a st
   for a in $(available_apps); do
     if app_installed "$a"; then st="${C_GREEN}установлено${C_RESET}"; else st="${C_DIM}не установлено${C_RESET}"; fi

@@ -10,6 +10,7 @@
 jitsi_TITLE="Jitsi Meet"
 jitsi_DESC="видеоконференции (комнаты создают только пользователи)"
 jitsi_MEM_MB=1500
+jitsi_ICON="🎥"
 
 J_REPO_URL="https://github.com/jitsi/docker-jitsi-meet.git"
 J_DIR="$APPS_DATA_DIR/jitsi"
@@ -20,8 +21,8 @@ J_STATE="$APPS_STATE_DIR/jitsi.env"
 J_PROJECT="ssa-jitsi"
 J_XMPP_DOMAIN="meet.jitsi"
 
-J_KEYS=(J_DOMAIN J_TAG J_HTTP_PORT J_JVB_PORT J_AUTH J_PUBLIC_IP J_INSTALLED_AT)
-J_DOMAIN=""; J_TAG=""; J_HTTP_PORT="8000"; J_JVB_PORT="10000"; J_AUTH="1"; J_PUBLIC_IP=""; J_INSTALLED_AT=""
+J_KEYS=(J_DOMAIN J_PORT J_TAG J_HTTP_PORT J_JVB_PORT J_AUTH J_PUBLIC_IP J_INSTALLED_AT)
+J_DOMAIN=""; J_PORT=""; J_TAG=""; J_HTTP_PORT="8000"; J_JVB_PORT="10000"; J_AUTH="1"; J_PUBLIC_IP=""; J_INSTALLED_AT=""
 
 OLD_SJ_STATE="/etc/selfsteal-jitsi/state.env"
 OLD_SJ_DIR="/opt/jitsi"
@@ -32,8 +33,10 @@ jitsi_installed() { [[ -f "$J_STATE" && -f "$J_SRC/docker-compose.yml" ]]; }
 _j_load()  {
   # shellcheck disable=SC1090
   [[ -f "$J_STATE" ]] && source "$J_STATE"
+  J_PORT="${J_PORT:-$PUBLIC_PORT}"   # <=0.6: one public port per node
   return 0
 }
+_j_url() { public_url "$J_DOMAIN" "$J_PORT"; }
 _j_save()  { install -d -m 700 "$APPS_STATE_DIR"; _write_env "$J_STATE" "${J_KEYS[@]}"; }
 
 _j_compose() {
@@ -99,7 +102,7 @@ _j_prepare_env() {
 
   _j_set_env CONFIG "$J_CFG"
   _j_set_env TZ "$(_j_host_tz)"
-  _j_set_env PUBLIC_URL "https://${J_DOMAIN}$([[ "$PUBLIC_PORT" != 443 ]] && echo ":$PUBLIC_PORT")"
+  _j_set_env PUBLIC_URL "$(_j_url)"
   _j_set_env HTTP_PORT "$J_HTTP_PORT"
   _j_set_env HTTPS_PORT "8443"
   _j_set_env DISABLE_HTTPS "1"
@@ -223,12 +226,13 @@ _j_stop_old() {
   log "selfsteal-jitsi остановлен (файлы в $OLD_SJ_DIR и $OLD_SJ_CFG оставлены)."
 }
 
-# jitsi install [--domain D] [--auth|--no-auth] [--http-port P] [--jvb-port P] [--tag stable-XXXX] [--no-migrate]
+# jitsi install [--domain D] [--port P] [--auth|--no-auth] [--http-port P] [--jvb-port P] [--tag stable-XXXX] [--no-migrate]
 jitsi_install() {
-  local tag="" no_migrate=0 d_arg="" auth_arg="" http_arg="" jvb_arg=""
+  local tag="" no_migrate=0 d_arg="" auth_arg="" http_arg="" jvb_arg="" port_arg=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --domain) d_arg="${2:-}"; shift 2;;
+      --port) port_arg="${2:-}"; shift 2;;
       --auth) auth_arg=1; shift;;
       --no-auth) auth_arg=0; shift;;
       --http-port) http_arg="${2:-}"; shift 2;;
@@ -242,6 +246,7 @@ jitsi_install() {
 
   _j_load
   local reinstall=0; jitsi_installed && reinstall=1
+  local cur_port=""; (( reinstall )) && cur_port="$J_PORT"
   title "Jitsi Meet$( (( reinstall )) && echo ' — переконфигурация')"
 
   _j_compose_supports_override || die "Нужен Docker Compose v2.24.4+ (сейчас: $(docker compose version --short))."
@@ -263,7 +268,8 @@ jitsi_install() {
   fi
   J_DOMAIN="$(lower "$J_DOMAIN")"
   valid_domain "$J_DOMAIN" || die "Некорректный домен: '$J_DOMAIN'"
-  _app_domain_conflict jitsi "$J_DOMAIN"
+  app_public_port J_PORT "$port_arg" "$cur_port"
+  _app_domain_conflict jitsi "$J_DOMAIN" "$J_PORT"
 
   if [[ -n "$auth_arg" ]]; then J_AUTH="$auth_arg"
   elif (( ! reinstall )) && [[ -z "$J_IMPORT_ENV" ]] && is_interactive; then
@@ -288,7 +294,7 @@ jitsi_install() {
   fi
   [[ "$tag" =~ ^stable-[0-9]+(-[0-9]+)?$ ]] || die "Некорректный тег: $tag"
 
-  info "Релиз: $tag | домен: $J_DOMAIN | auth: $J_AUTH | web: 127.0.0.1:$J_HTTP_PORT | JVB: UDP/$J_JVB_PORT"
+  info "Релиз: $tag | адрес: $(_j_url) | auth: $J_AUTH | web: 127.0.0.1:$J_HTTP_PORT | JVB: UDP/$J_JVB_PORT"
   _j_checkout "$tag"
   J_TAG="$tag"
   [[ -n "$J_IMPORT_ENV" && ! -f "$J_SRC/.env" ]] && install -m 600 "$J_IMPORT_ENV" "$J_SRC/.env"
@@ -305,9 +311,9 @@ jitsi_install() {
   _j_wait_http
   _j_check_udp
 
-  domain_ensure "$J_DOMAIN" jitsi "http://127.0.0.1:${J_HTTP_PORT}"
+  domain_ensure "$J_DOMAIN" jitsi "http://127.0.0.1:${J_HTTP_PORT}" "$J_PORT"
 
-  log "Jitsi Meet готов: https://${J_DOMAIN}$([[ "$PUBLIC_PORT" != 443 ]] && echo ":$PUBLIC_PORT")"
+  log "Jitsi Meet готов: $(_j_url)"
   if [[ "$J_AUTH" == "1" && "$(_j_user_names | wc -l)" -eq 0 ]]; then
     warn "Пользователей ещё нет — без них никто не сможет открыть комнату."
     if is_interactive && confirm "Создать пользователя сейчас?" y; then
@@ -358,7 +364,7 @@ jitsi_status() {
   jitsi_installed || { info "Jitsi не установлен. Установить: selfsteal-apps app jitsi install"; return 0; }
   _j_load
   title "Jitsi Meet"
-  printf ' Домен:   https://%s\n' "$J_DOMAIN"
+  printf ' Адрес:   %s\n' "$(_j_url)"
   printf ' Релиз:   %s\n' "$J_TAG"
   printf ' Auth:    %s\n' "$( [[ $J_AUTH == 1 ]] && echo "только пользователи создают комнаты, гости по ссылке" || echo "открытый (любой может создать комнату)")"
   printf ' Web:     127.0.0.1:%s ' "$J_HTTP_PORT"
@@ -370,7 +376,7 @@ jitsi_status() {
   _j_compose ps --format 'table {{.Service}}\t{{.Status}}' 2>/dev/null || true
 }
 
-jitsi_brief() { _j_load; printf '%s' "$J_DOMAIN"; }
+jitsi_brief() { _j_load; _j_url; }
 jitsi_version() { _j_load; printf 'релиз %s' "${J_TAG:-?}"; }
 
 jitsi_logs() {
@@ -452,7 +458,10 @@ jitsi_cmd() {
 }
 
 jitsi_menu_extra() {
-  printf '  6) Пользователи: список\n  7) Добавить пользователя\n  8) Сменить пароль\n  9) Удалить пользователя\n'
+  _menu_item 6 👥 "Пользователи: список"
+  _menu_item 7 👤 "Добавить пользователя"
+  _menu_item 8 🔑 "Сменить пароль"
+  _menu_item 9 🚫 "Удалить пользователя"
 }
 
 jitsi_menu_action() {

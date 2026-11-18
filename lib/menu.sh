@@ -27,10 +27,13 @@ _menu_domains() {
     echo
     local ipt="Включить показ сайта по IP"
     [[ "${IP_ACCESS:-0}" == "1" ]] && ipt="Выключить показ сайта по IP"
-    printf '  1) Добавить домен\n  2) Изменить содержимое домена\n  3) Удалить домен\n  4) %s\n' "$ipt"
-    [[ "${IP_ACCESS:-0}" == "1" ]] && printf '  5) Сменить сайт, который показывается по IP\n'
-    printf '  0) Назад\n\n'
-    local c; read -r -p "Выбор: " c || return 0
+    _menu_item 1 ➕ "Добавить домен"
+    _menu_item 2 📝 "Изменить содержимое домена"
+    _menu_item 3 ❌ "Удалить домен"
+    _menu_item 4 🌐 "$ipt"
+    [[ "${IP_ACCESS:-0}" == "1" ]] && _menu_item 5 🔁 "Сменить сайт, который показывается по IP"
+    _menu_item 0 🔙 "Назад"
+    local c; _menu_prompt c || return 0
     case "$c" in
       1) _menu_run domain_add ;;
       2) _menu_run domain_set ;;
@@ -47,8 +50,15 @@ _menu_certs() {
     _menu_header
     cert_list
     echo
-    printf '  1) Wildcard через Cloudflare (*.зона + зона)\n  2) Отдельный сертификат для домена (http-01)\n  3) Перевыпустить принудительно\n  4) Экспорт — для переноса на другую ноду\n  5) Импорт — архив/папка/файлы с другой ноды\n  6) Продлить все, у которых подходит срок\n  7) Удалить wildcard\n  0) Назад\n\n'
-    local c; read -r -p "Выбор: " c || return 0
+    _menu_item 1 🌟 "Wildcard через Cloudflare (*.зона + зона)"
+    _menu_item 2 📄 "Отдельный сертификат для домена (http-01)"
+    _menu_item 3 🔁 "Перевыпустить принудительно"
+    _menu_item 4 📤 "Экспорт — для переноса на другую ноду"
+    _menu_item 5 📥 "Импорт — архив/папка/файлы с другой ноды"
+    _menu_item 6 ⏳ "Продлить все, у которых подходит срок"
+    _menu_item 7 ❌ "Удалить wildcard"
+    _menu_item 0 🔙 "Назад"
+    local c; _menu_prompt c || return 0
     case "$c" in
       1) _menu_run cert_cmd wildcard ;;
       2) _menu_run cert_cmd issue ;;
@@ -68,7 +78,7 @@ _menu_service() {
     local v; v="$(container_running && nginx_version || true)"
     printf ' %snginx %s%s%s (%s)\n\n' "$(ic 🧩)" "$C_BOLD" "${v:-не запущен}" "$C_RESET" "$NGINX_IMAGE"
     local et="Выключить значки в меню"; ui_emoji || et="Включить значки в меню"
-    _menu_item 1 🔄 "Перезапустить nginx (пересоздать конфиг)"
+    _menu_item 1 🔄 "Перезапустить nginx (пересоздать контейнер)"
     _menu_item 2 🆕 "Обновить nginx (скачать свежий образ)"
     _menu_item 3 📜 "Логи nginx (Ctrl+C — выход)"
     _menu_item 4 🔌 "Проверить доступ Xray к сокету"
@@ -97,13 +107,16 @@ _menu_app() {
     ( "${a}_status" ) 2>/dev/null || true
     echo
     if app_installed "$a"; then
-      printf '  1) Переустановить / изменить настройки\n  2) Обновить до последней стабильной версии\n  3) Логи (Ctrl+C — выход)\n  4) Удалить\n'
+      _menu_item 1 🔧 "Переустановить / изменить настройки"
+      _menu_item 2 🆕 "Обновить до последней стабильной версии"
+      _menu_item 3 📜 "Логи (Ctrl+C — выход)"
+      _menu_item 4 ❌ "Удалить"
       app_has "$a" menu_extra && "${a}_menu_extra"
     else
-      printf '  1) Установить\n'
+      _menu_item 1 📥 "Установить"
     fi
-    printf '  0) Назад\n\n'
-    local c; read -r -p "Выбор: " c || return 0
+    _menu_item 0 🔙 "Назад"
+    local c; _menu_prompt c || return 0
     case "$c" in
       0|"") return 0 ;;
       1) _menu_run "${a}_install" ;;
@@ -122,9 +135,9 @@ _menu_apps() {
     echo
     local apps i=1 a
     mapfile -t apps < <(available_apps)
-    for a in "${apps[@]}"; do printf '  %d) %s\n' "$i" "$(app_title "$a")"; i=$((i+1)); done
-    printf '  0) Назад\n\n'
-    local c; read -r -p "Выбор: " c || return 0
+    for a in "${apps[@]}"; do _menu_item "$i" "$(app_icon "$a")" "$(app_title "$a")"; i=$((i+1)); done
+    _menu_item 0 🔙 "Назад"
+    local c; _menu_prompt c || return 0
     [[ "$c" == 0 || -z "$c" ]] && return 0
     if [[ "$c" =~ ^[0-9]+$ ]] && (( c >= 1 && c <= ${#apps[@]} )); then
       _menu_app "${apps[$((c-1))]}"
@@ -139,13 +152,15 @@ main_menu() {
     clear 2>/dev/null || true
     if ! is_installed; then
       dash_header
+      echo
       if adopt_detect; then
-        printf '  1) Перенести существующий nginx-selfsteal (adopt)\n'
+        _menu_item 1 🚚 "Перенести существующий nginx-selfsteal (adopt)"
       else
-        printf '  1) Установить\n'
+        _menu_item 1 📥 "Установить"
       fi
-      printf '  9) Обновить скрипт\n  0) Выход\n\n'
-      local c; read -r -p "Выбор: " c || return 0
+      _menu_item 9 🔄 "Обновить скрипт"
+      _menu_item 0 🚪 "Выход"
+      local c; _menu_prompt c || return 0
       case "$c" in
         1) if adopt_detect; then _menu_run adopt_cmd; else _menu_run install_cmd; fi ;;
         9) _menu_run update_cmd ;;

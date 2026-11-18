@@ -124,7 +124,6 @@ _realip_block() {
 }
 
 render_default_conf() {
-  local listen; listen="$(nginx_listen_addr)"
   cat > "$NGINX_CONFD/00-default.conf" <<EOF
 # Managed by selfsteal-apps — regenerated on every apply.
 
@@ -144,45 +143,54 @@ server {
         return 404;
     }
 }
-
 EOF
-  local ipd
-  if ipd="$(ip_access_domain)"; then
-    # subshell: load_domain sets globals used by site_locations
-    ( _ip_default_server "$ipd" "$listen" ) >> "$NGINX_CONFD/00-default.conf"
-  else
-    cat >> "$NGINX_CONFD/00-default.conf" <<EOF
+  # One TLS catch-all per listener (public port): unknown SNI / bare IP -> reject,
+  # or the IP-access site on its own port.
+  local p ips="" listen
+  ips="$(ip_access_site || true)"
+  for p in $(site_ports); do
+    listen="$(port_listen "$p")"
+    if [[ -n "$ips" && "$(site_port "$ips")" == "$p" ]]; then
+      # subshell: load_site sets globals used by site_locations
+      ( _ip_default_server "$ips" "$listen" ) >> "$NGINX_CONFD/00-default.conf"
+    else
+      cat >> "$NGINX_CONFD/00-default.conf" <<EOF
 
-# TLS catch-all for unknown SNI / bare IP: reject the handshake.
+# Public port ${p}: TLS catch-all for unknown SNI / bare IP — reject the handshake.
 server {
     listen ${listen} $(_tls_listen_params) default_server;
     server_name _;
     ssl_reject_handshake on;
 }
 EOF
-  fi
+    fi
+  done
 }
 
-# ip_access_domain — prints the domain shown on https://<IP>; fails if IP access is off or impossible.
-ip_access_domain() {
+# ip_access_site — prints the site (domain@port) shown on https://<IP>:<port>;
+# fails if IP access is off or no site has a certificate.
+ip_access_site() {
   [[ "${IP_ACCESS:-0}" == "1" ]] || return 1
-  local d
-  for d in "${IP_DOMAIN:-}" $(list_domains); do
-    [[ -n "$d" ]] && domain_exists "$d" && has_cert "$d" && { printf '%s' "$d"; return 0; }
+  local s
+  for s in "${IP_DOMAIN:-}" $(list_sites); do
+    [[ -n "$s" ]] && site_exists "$s" && has_cert "$(site_domain "$s")" && { printf '%s' "$s"; return 0; }
   done
   return 1
 }
+# compat: domain shown on IP access
+ip_access_domain() { local s; s="$(ip_access_site)" || return 1; site_domain "$s"; }
 
-# TLS catch-all serving domain D's site. Host is pinned to D for the upstream:
+# TLS catch-all serving site S. Host is pinned to its domain for the upstream:
 # apps (Nextcloud trusted_domains, Jitsi) answer only to their own name.
 _ip_default_server() {
-  local d="$1" listen="$2" cn locs
-  load_domain "$d" || return 1
+  local sid="$1" listen="$2" d cn locs
+  load_site "$sid" || return 1
+  d="$DOMAIN"
   cn="$(domain_cert_name "$d")"
   locs="$(site_locations | sed "s/\\\$host/$d/g")"
   cat <<EOF
 
-# TLS catch-all for unknown SNI / bare IP: site of ${d} (IP access is on).
+# Public port ${PORT}: TLS catch-all for unknown SNI / bare IP — site of ${d} (IP access is on).
 server {
     listen ${listen} $(_tls_listen_params) default_server;
     http2 on;
@@ -254,15 +262,18 @@ site_locations() {
   esac
 }
 
+# One file per domain: an HTTP block (ACME + redirect to the main site) and a TLS block
+# for every site (public port) of the domain on that port's listener.
 render_site() {
-  local d="$1" out listen redirect_port="" cn
-  load_domain "$d" || return 1
+  local d="$1" out main_port cn sid sites
+  sites="$(sites_of "$d")"
+  [[ -n "$sites" ]] || return 1
   out="$NGINX_SITES/$d.conf"
-  listen="$(nginx_listen_addr)"
-  [[ "$PUBLIC_PORT" != "443" ]] && redirect_port=":$PUBLIC_PORT"
+  main_port="$(site_port "$(domain_main_site "$d")")"
+  cn="$(domain_cert_name "$d")"
 
   {
-    printf '# Managed by selfsteal-apps — domain %s (app: %s)\n' "$d" "$APP"
+    printf '# Managed by selfsteal-apps — domain %s, ports: %s\n' "$d" "$(cut -d@ -f2 <<<"$sites" | paste -sd' ' -)"
     cat <<EOF
 server {
     listen 80;
@@ -275,16 +286,18 @@ server {
     }
 
     location / {
-        return 301 https://\$host${redirect_port}\$request_uri;
+        return 301 $(public_url "\$host" "$main_port")\$request_uri;
     }
 }
 EOF
-    cn="$(domain_cert_name "$d")"
-    if store_has "$cn"; then
-      cat <<EOF
+    for sid in $sites; do
+      load_site "$sid" || continue
+      if store_has "$cn"; then
+        cat <<EOF
 
+# ${d} on public port ${PORT} (app: ${APP})
 server {
-    listen ${listen} $(_tls_listen_params);
+    listen $(port_listen "$PORT") $(_tls_listen_params);
     http2 on;
     server_name ${d};
 
@@ -295,9 +308,10 @@ $(_realip_block)
 $(site_locations)
 }
 EOF
-    else
-      printf '\n# TLS block is disabled: no certificate yet for %s\n' "$d"
-    fi
+      else
+        printf '\n# %s on public port %s: TLS block is disabled — no certificate yet\n' "$d" "$PORT"
+      fi
+    done
   } > "$out"
 }
 
@@ -351,11 +365,16 @@ apply_config() {
     rm -rf "$backup"
     return 1
   fi
+  # the container itself must be recreated only when its compose definition changed
+  local compose_changed=0
+  cmp -s "$backup/docker-compose.yml" "$NGINX_DIR/docker-compose.yml" || compose_changed=1
   rm -rf "$backup"
 
-  if container_running && [[ "${_SSA_RECREATE:-0}" != "1" ]]; then
+  if container_running && [[ "${_SSA_RECREATE:-0}" != "1" ]] && (( ! compose_changed )); then
+    _drop_stale_sockets
     if nginx_hup; then
-      log "nginx перезагружен."
+      _wait_listeners 5 || warn "nginx не открыл часть слушателей — смотрите: selfsteal-apps logs"
+      log "Конфиг nginx перечитан (без перезапуска, соединения не рвутся)."
     else
       warn "Не удалось послать reload nginx — перезапускаю контейнер."
       nginx_up
@@ -365,10 +384,35 @@ apply_config() {
   fi
 }
 
+# Socket listening right now? (ss sees the nginx container: it runs with network_mode host)
+_sock_listening() { ss -Hxl 2>/dev/null | grep -qF " $1 "; }
+
+# A socket file nobody listens on (crash, removed port) makes nginx fail to bind it on reload.
+_drop_stale_sockets() {
+  local s
+  while read -r s; do
+    [[ -n "$s" && -S "$s" ]] || continue
+    _sock_listening "$s" || rm -f "$s"
+  done < <(socket_paths)
+  return 0
+}
+
+# Wait until every socket listener exists (socket mode). _wait_listeners SECONDS
+_wait_listeners() {
+  [[ "$LISTEN_MODE" == "socket" ]] || return 0
+  local t="${1:-10}" i s missing=""
+  for i in $(seq 1 "$t"); do
+    missing=""
+    while read -r s; do [[ -n "$s" && ! -S "$s" ]] && missing+="$s "; done < <(socket_paths)
+    [[ -z "$missing" ]] && return 0
+    sleep 1
+  done
+  warn "Не появились сокеты: $missing"
+  return 1
+}
+
 nginx_up() {
-  if ! container_running && [[ "$LISTEN_MODE" == "socket" && -S "$SOCKET_PATH" ]]; then
-    rm -f "$SOCKET_PATH"   # stale socket after crash
-  fi
+  container_running || _drop_stale_sockets   # stale sockets after a crash
   compose --progress quiet up -d --force-recreate --remove-orphans >/dev/null
   local i
   for i in $(seq 1 15); do
@@ -376,10 +420,7 @@ nginx_up() {
     sleep 1
   done
   container_running || { compose logs --tail 30 >&2 || true; die "Контейнер $CONTAINER не запустился."; }
-  if [[ "$LISTEN_MODE" == "socket" ]]; then
-    for i in $(seq 1 10); do [[ -S "$SOCKET_PATH" ]] && break; sleep 1; done
-    [[ -S "$SOCKET_PATH" ]] || warn "Сокет $SOCKET_PATH не появился — проверьте логи."
-  fi
+  _wait_listeners 10 || warn "Проверьте логи: selfsteal-apps logs"
   log "nginx запущен ($CONTAINER)."
 }
 
@@ -397,7 +438,9 @@ nginx_reload() {
 # Ensures nothing else holds :80 (and the TCP listen port in tcp mode).
 check_ports_free() {
   local p owner
-  for p in 80 $([[ "$LISTEN_MODE" == "tcp" ]] && echo "$TCP_PORT"); do
+  local tcp=""
+  [[ "$LISTEN_MODE" == "tcp" ]] && tcp="$(for p in $(site_ports); do port_target "$p" | cut -d: -f2; done)"
+  for p in 80 $tcp; do
     if port_in_use_tcp "$p"; then
       container_running && continue
       owner="$(port_owner_tcp "$p")"

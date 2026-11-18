@@ -49,8 +49,11 @@ install_cmd() {
   fi
   [[ "$SOCKET_PATH" == /* ]] || die "Путь сокета должен быть абсолютным."
 
-  [[ -n "$public_port" ]] || ask public_port "Публичный порт Reality inbound" "$PUBLIC_PORT"
-  valid_port "$public_port" || die "Некорректный порт: $public_port"
+  [[ -n "$public_port" ]] || ask public_port "Основной публичный порт (порт Xray inbound)" "$PUBLIC_PORT"
+  valid_public_port "$public_port" || die "Некорректный порт: $public_port (1-65535, не 80)"
+  if [[ "$public_port" != "$PUBLIC_PORT" && -n "$(list_sites)" ]]; then
+    die "Основной порт сейчас $PUBLIC_PORT и на нём есть домены — менять его нельзя. Домен на другом порту: selfsteal-apps domain add <домен> --port $public_port"
+  fi
   PUBLIC_PORT="$public_port"
   (( no_pp )) && PROXY_PROTOCOL="0"
 
@@ -88,9 +91,12 @@ install_cmd() {
 status_cmd() {
   is_installed || { info "selfsteal-apps не установлен. Запустите: selfsteal-apps install"; return 0; }
   title "selfsteal-apps $SSA_VERSION"
-  printf ' Режим:          %s\n' "$( [[ $LISTEN_MODE == socket ]] && echo "unix-сокет $SOCKET_PATH" || echo "tcp 127.0.0.1:$TCP_PORT")"
+  printf ' Режим:          %s\n' "$( [[ $LISTEN_MODE == socket ]] && echo "unix-сокеты" || echo "tcp 127.0.0.1")"
   printf ' proxy_protocol: %s\n' "$( [[ $PROXY_PROTOCOL == 1 ]] && echo "да (xver 1)" || echo "нет (xver 0)")"
-  printf ' Публичный порт: %s\n' "$PUBLIC_PORT"
+  local lp
+  for lp in $(site_ports); do
+    printf ' Порт %-9s Xray target: %s%s\n' "$lp:" "$(port_target "$lp")" "$([[ "$lp" == "$PUBLIC_PORT" ]] && echo "  (основной)")"
+  done
   printf ' IPv4:           %s\n' "${PUBLIC_IP:-?}"
   if container_running; then
     printf ' nginx:          %sработает%s, версия %s (%s)\n' "$C_GREEN" "$C_RESET" "$(nginx_version || true)" "$(docker inspect -f '{{.Config.Image}}' "$CONTAINER")"
@@ -98,8 +104,12 @@ status_cmd() {
     printf ' nginx:          %sне запущен%s\n' "$C_RED" "$C_RESET"
   fi
   if [[ "$LISTEN_MODE" == "socket" ]]; then
-    [[ -S "$SOCKET_PATH" ]] && printf ' Сокет:          %sесть%s\n' "$C_GREEN" "$C_RESET" ||
-      printf ' Сокет:          %sнет%s\n' "$C_RED" "$C_RESET"
+    local sp
+    while read -r sp; do
+      [[ -n "$sp" ]] || continue
+      [[ -S "$sp" ]] && printf ' Сокет:          %sесть%s %s\n' "$C_GREEN" "$C_RESET" "$sp" ||
+        printf ' Сокет:          %sнет%s %s\n' "$C_RED" "$C_RESET" "$sp"
+    done < <(socket_paths)
   fi
   if acme_installed && crontab -l 2>/dev/null | grep -q "$ACME_HOME"; then
     printf ' Автопродление:  %sвключено (cron)%s\n' "$C_GREEN" "$C_RESET"
@@ -113,39 +123,53 @@ status_cmd() {
   apps_status_brief
 }
 
-# ip [status | on [домен] | off] — show a site on https://<IP> (and unknown SNI) or reject the handshake.
+# ip [status | on [домен] [--port P] | off] — show a site on https://<IP>:<port> (and unknown SNI) or reject.
 ip_cmd() {
   is_installed || die "Не установлено."
-  local sub="${1:-status}" d="${2:-}"
+  local sub="${1:-status}"; shift || true
+  local d="" p="" sid=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port) p="${2:-}"; shift 2;;
+      *) d="$(lower "$1")"; shift;;
+    esac
+  done
   case "$sub" in
     status|"") ip_status ;;
     on|enable)
-      if [[ -z "$d" ]]; then
-        local ds=() x
-        for x in $(list_domains); do has_cert "$x" && ds+=("$x"); done
-        (( ${#ds[@]} )) || die "Нет доменов с сертификатом — показывать по IP нечего."
-        if (( ${#ds[@]} == 1 )) || ! is_interactive; then d="${ds[0]}"
-        else choose d "Какой сайт показывать по IP" 1 "${ds[@]}"; fi
+      if [[ -n "$d" ]]; then
+        pick_site sid "$d" "$p" || return 0
+      else
+        local ss=() labels=() x c i
+        for x in $(list_sites); do has_cert "$(site_domain "$x")" && ss+=("$x"); done
+        (( ${#ss[@]} )) || die "Нет доменов с сертификатом — показывать по IP нечего."
+        if (( ${#ss[@]} == 1 )) || ! is_interactive; then sid="${ss[0]}"
+        else
+          for x in "${ss[@]}"; do labels+=("$(site_label "$x")"); done
+          choose c "Какой сайт показывать по IP" 1 "${labels[@]}"
+          for i in "${!labels[@]}"; do [[ "${labels[$i]}" == "$c" ]] && sid="${ss[$i]}"; done
+        fi
       fi
-      domain_exists "$d" || die "Домен $d не найден."
-      has_cert "$d" || die "У $d нет сертификата — сначала выпустите его."
-      IP_ACCESS=1; IP_DOMAIN="$d"; save_config
+      site_exists "$sid" || die "Сайт не найден."
+      has_cert "$(site_domain "$sid")" || die "У $(site_domain "$sid") нет сертификата — сначала выпустите его."
+      IP_ACCESS=1; IP_DOMAIN="$sid"; save_config
       apply_config || die "Не удалось применить конфиг."
-      log "По https://${PUBLIC_IP:-<IP>} теперь открывается $d (браузер предупредит о сертификате — это нормально)."
+      log "По $(public_url "${PUBLIC_IP:-<IP>}" "$(site_port "$sid")") теперь открывается $(site_label "$sid") (браузер предупредит о сертификате — это нормально)."
       ;;
     off|disable)
       IP_ACCESS=0; save_config
       apply_config || die "Не удалось применить конфиг."
       log "Доступ по IP выключен: TLS-соединения без известного домена обрываются."
       ;;
-    *) die "Использование: selfsteal-apps ip [status | on [домен] | off]" ;;
+    *) die "Использование: selfsteal-apps ip [status | on [домен] [--port P] | off]" ;;
   esac
 }
 
 ip_status() {
-  local d
-  if d="$(ip_access_domain)"; then
-    printf ' Доступ по IP:   %sвключён%s — https://%s → %s\n' "$C_GREEN" "$C_RESET" "${PUBLIC_IP:-<IP>}" "$d"
+  local s
+  if s="$(ip_access_site)"; then
+    printf ' Доступ по IP:   %sвключён%s — %s открывает сайт %s\n' "$C_GREEN" "$C_RESET" \
+      "$(public_url "${PUBLIC_IP:-<IP>}" "$(site_port "$s")")" "$(site_label "$s")"
   elif [[ "${IP_ACCESS:-0}" == "1" ]]; then
     printf ' Доступ по IP:   %sвключён, но нет домена с сертификатом%s — соединения обрываются\n' "$C_YELLOW" "$C_RESET"
   else
@@ -159,6 +183,9 @@ logs_cmd() {
 }
 
 restart_cmd() { is_installed || die "Не установлено."; acme_migrate_reloadcmd; _SSA_RECREATE=1 apply_config; }
+
+# Re-render configs and reload nginx gracefully; recreates the container only if docker-compose.yml changed.
+apply_cmd() { is_installed || die "Не установлено."; acme_migrate_reloadcmd; apply_config; }
 
 down_cmd() {
   is_installed || die "Не установлено."
@@ -218,7 +245,7 @@ domain_cmd() {
     add) domain_add "$@" ;;
     rm|remove|del) domain_remove "$@" ;;
     set) domain_set "$@" ;;
-    *) die "domain: list | add <домен> [--page P|--proxy URL] | set <домен> ... | remove <домен>";;
+    *) die "domain: list | add <домен> [--port P] [--page P|--proxy URL] | set <домен> [--port P] ... | remove <домен> [--port P]";;
   esac
 }
 
@@ -237,8 +264,9 @@ uninstall_cmd() {
   done
   if [[ -f "$NGINX_DIR/docker-compose.yml" ]]; then compose down >/dev/null 2>&1 || true; fi
   if acme_installed; then acme --uninstall >/dev/null 2>&1 || true; fi
+  local socks; socks="$(socket_paths)"
   rm -rf "${DATA_DIR:?}" "${CONF_DIR:?}"
-  [[ "$LISTEN_MODE" == "socket" ]] && rm -f "$SOCKET_PATH"
+  local sp; while read -r sp; do [[ -n "$sp" ]] && rm -f "$sp"; done <<<"$socks"
   if [[ "${1:-}" == "--purge" ]] || { is_interactive && confirm "Удалить и саму команду selfsteal-apps?" n; }; then
     rm -f "$BIN_LINK"; rm -rf "${SSA_LIB:?}"
     log "Команда удалена."
@@ -257,8 +285,9 @@ update_cmd() {
   SSA_REPO="$SSA_REPO" SSA_BRANCH="$SSA_BRANCH" SSA_NO_LAUNCH=1 bash "$tmp" || { rm -f "$tmp"; die "Обновление не удалось."; }
   rm -f "$tmp"
   if is_installed; then
-    # re-exec the new code to re-render configs with possible template fixes (nginx image is not touched)
-    "$BIN_LINK" restart
+    # re-exec the new code: re-render configs with possible template fixes and reload nginx gracefully
+    # (no container restart unless docker-compose.yml changed; the nginx image is not touched)
+    "$BIN_LINK" apply
   fi
 }
 
@@ -312,25 +341,27 @@ ${C_BOLD}selfsteal-apps ${SSA_VERSION}${C_RESET} — nginx-маскировка 
 Без аргументов открывается интерактивное меню.
 
 ${C_BOLD}Установка${C_RESET}
-  install [--socket | --tcp --tcp-port 9443] [--public-port 443]
+  install [--socket | --tcp --tcp-port 9443] [--public-port 443]   (основной порт Xray inbound)
           [--email you@x.com] [--domain D [--page 403|--proxy URL]] [--yes]
   adopt                         перенести существующий nginx-selfsteal (DigneZzZ)
 
 ${C_BOLD}Домены${C_RESET}
   domain list
-  domain add <домен> [--page 403|404|502|503|welcome] [--proxy http://127.0.0.1:8000]
+  domain add <домен> [--port P] [--page 403|404|502|503|welcome] [--proxy http://127.0.0.1:8000]
+                     --port: публичный порт (порт Xray inbound), по умолчанию основной; один домен
+                     может жить на нескольких портах с разным содержимым
                      [--http | --wildcard [--cf-token T --cf-zone-id ID] | --no-cert]
                      (если есть wildcard зоны — он подхватывается сам)
-  domain set <домен> --page P | --proxy URL
-  domain remove <домен>
-  ip [status | on [домен] | off] показывать сайт по https://<IP> (по умолчанию выкл — соединение обрывается)
+  domain set <домен> [--port P] --page P | --proxy URL
+  domain remove <домен> [--port P]
+  ip [status | on [домен] [--port P] | off] показывать сайт по https://<IP> (по умолчанию выкл — соединение обрывается)
 
 ${C_BOLD}Приложения${C_RESET}
   app list
-  app jitsi install [--domain D] [--auth|--no-auth] [--http-port 8000] [--jvb-port 10000]
+  app jitsi install [--domain D] [--port P] [--auth|--no-auth] [--http-port 8000] [--jvb-port 10000]
   app jitsi status | logs [web|prosody|jicofo|jvb] | update [--force] | restart | uninstall
   app jitsi user list | add <имя> [пароль] | passwd <имя> [пароль] | del <имя>
-  app nextcloud install [--domain D] [--admin NAME] [--http-port 8081]
+  app nextcloud install [--domain D] [--port P] [--admin NAME] [--http-port 8081]
   app nextcloud status | logs [app|db|redis|cron] | update | restart | uninstall
   app nextcloud user list | add <имя> [пароль] | passwd <имя> [пароль] | del <имя>
   app nextcloud occ <аргументы>              любая команда occ
@@ -347,7 +378,9 @@ ${C_BOLD}Сертификаты${C_RESET}
   cert renew                                 продлить всё, у чего подходит срок
 
 ${C_BOLD}Сервис${C_RESET}
-  status | logs [N] | restart | down | xray | version | uninstall
+  status | logs [N] | down | xray | version | uninstall
+  apply                                      пересобрать конфиг и перечитать его без перезапуска nginx
+  restart                                    пересобрать конфиг и пересоздать контейнер nginx
   update                                     обновить скрипт (nginx не трогает)
   nginx version | update                     версия nginx / скачать свежий образ nginx и пересоздать
   doctor [--fix]                             диагностика: NAT-перенаправления 443, старые задания cron, порты

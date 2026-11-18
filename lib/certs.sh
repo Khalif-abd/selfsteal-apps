@@ -387,7 +387,9 @@ _adopt_wildcard_for_zone() {
 }
 
 _set_cert_source() {
-  ( load_domain "$1" && CERT_SOURCE="$2" && save_domain )
+  local s
+  for s in $(sites_of "$1"); do ( load_site "$s" && CERT_SOURCE="$2" && save_site ) || true; done
+  return 0
 }
 
 wildcard_remove() {
@@ -543,7 +545,7 @@ renew_all() {
 }
 
 cert_list() {
-  title "Сертификаты"
+  title "$(ic 🔐)Сертификаты"
   local n d users
   for n in $(store_names); do
     users=""

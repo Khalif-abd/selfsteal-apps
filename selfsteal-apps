@@ -26,6 +26,7 @@ load_app_plugins
 trap 'err "Ошибка в строке $LINENO: $BASH_COMMAND"' ERR
 
 load_config
+migrate_sites   # <=0.6 domain records -> domain@port sites (idempotent)
 
 cmd="${1:-}"; shift || true
 case "$cmd" in
@@ -38,7 +39,8 @@ case "$cmd" in
   app | apps)           app_cmd "$@" ;;
   status)               status_cmd ;;
   logs)                 logs_cmd "$@" ;;
-  restart | apply)      restart_cmd ;;
+  restart)              restart_cmd ;;
+  apply | reload)       apply_cmd ;;
   nginx)                nginx_cmd "$@" ;;
   doctor | check)       doctor_cmd "$@" ;;
   down | stop)          down_cmd ;;

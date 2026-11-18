@@ -11,6 +11,7 @@
 nextcloud_TITLE="Nextcloud"
 nextcloud_DESC="облачное хранилище (вход только по логину)"
 nextcloud_MEM_MB=700
+nextcloud_ICON="📁"
 
 N_DIR="$APPS_DATA_DIR/nextcloud"
 N_COMPOSE="$N_DIR/docker-compose.yml"
@@ -22,16 +23,18 @@ N_REDIS_IMAGE="redis:8-alpine"
 N_UPLOAD_LIMIT="100M"
 N_LIBRARY_URL="https://raw.githubusercontent.com/docker-library/official-images/master/library/nextcloud"
 
-N_KEYS=(N_DOMAIN N_MAJOR N_HTTP_PORT N_ADMIN N_INSTALLED_AT)
-N_DOMAIN=""; N_MAJOR=""; N_HTTP_PORT="8081"; N_ADMIN="admin"; N_INSTALLED_AT=""
+N_KEYS=(N_DOMAIN N_PORT N_MAJOR N_HTTP_PORT N_ADMIN N_INSTALLED_AT)
+N_DOMAIN=""; N_PORT=""; N_MAJOR=""; N_HTTP_PORT="8081"; N_ADMIN="admin"; N_INSTALLED_AT=""
 
 nextcloud_installed() { [[ -f "$N_STATE" && -f "$N_COMPOSE" ]]; }
 
 _n_load() {
   # shellcheck disable=SC1090
   [[ -f "$N_STATE" ]] && source "$N_STATE"
+  N_PORT="${N_PORT:-$PUBLIC_PORT}"   # <=0.6: one public port per node
   return 0
 }
+_n_url() { public_url "$N_DOMAIN" "$N_PORT"; }
 _n_save() { install -d -m 700 "$APPS_STATE_DIR"; _write_env "$N_STATE" "${N_KEYS[@]}"; }
 
 _n_compose() { docker compose -p "$N_PROJECT" --project-directory "$N_DIR" --env-file "$N_ENV" -f "$N_COMPOSE" "$@"; }
@@ -56,8 +59,8 @@ _n_write_env() {
   [[ -n "$root" ]] || root="$(_n_secret)"
   [[ -n "$pass" ]] || pass="$(_n_secret)"
   [[ -n "$admin_pass" ]] || admin_pass="$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-20)"
-  local overwrite_host="" url="https://${N_DOMAIN}"
-  if [[ "$PUBLIC_PORT" != 443 ]]; then overwrite_host="${N_DOMAIN}:${PUBLIC_PORT}"; url="https://${N_DOMAIN}:${PUBLIC_PORT}"; fi
+  local overwrite_host="" url; url="$(_n_url)"
+  [[ "$N_PORT" != 443 ]] && overwrite_host="${N_DOMAIN}:${N_PORT}"
   install -d -m 700 "$N_DIR"
   ( umask 077
     cat > "$N_ENV" <<EOF
@@ -198,12 +201,13 @@ _n_pick_port() {
   printf '%s' "$p"
 }
 
-# nextcloud install [--domain D] [--admin NAME] [--http-port P] [--major N]
+# nextcloud install [--domain D] [--port P] [--admin NAME] [--http-port P] [--major N]
 nextcloud_install() {
-  local d_arg="" admin_arg="" port_arg="" major_arg=""
+  local d_arg="" admin_arg="" port_arg="" major_arg="" pub_arg=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --domain) d_arg="${2:-}"; shift 2;;
+      --port) pub_arg="${2:-}"; shift 2;;
       --admin) admin_arg="${2:-}"; shift 2;;
       --http-port) port_arg="${2:-}"; shift 2;;
       --major) major_arg="${2:-}"; shift 2;;
@@ -214,6 +218,7 @@ nextcloud_install() {
 
   _n_load
   local reinstall=0; nextcloud_installed && reinstall=1
+  local cur_port=""; (( reinstall )) && cur_port="$N_PORT"
   title "Nextcloud$( (( reinstall )) && echo ' — переконфигурация')"
   (( reinstall )) || app_check_memory nextcloud
 
@@ -221,7 +226,8 @@ nextcloud_install() {
   [[ -n "$N_DOMAIN" ]] || ask N_DOMAIN "Домен для Nextcloud (например cloud.example.com)"
   N_DOMAIN="$(lower "$N_DOMAIN")"
   valid_domain "$N_DOMAIN" || die "Некорректный домен: '$N_DOMAIN'"
-  _app_domain_conflict nextcloud "$N_DOMAIN"
+  app_public_port N_PORT "$pub_arg" "$cur_port"
+  _app_domain_conflict nextcloud "$N_DOMAIN" "$N_PORT"
 
   if (( ! reinstall )); then
     [[ -n "$admin_arg" ]] && N_ADMIN="$admin_arg"
@@ -246,7 +252,7 @@ nextcloud_install() {
     [[ "$N_MAJOR" =~ ^[0-9]+$ ]] || die "Некорректная версия: $N_MAJOR"
   fi
 
-  info "Nextcloud ${N_MAJOR} | домен: $N_DOMAIN | web: 127.0.0.1:$N_HTTP_PORT | БД: $N_DB_IMAGE | загрузка до $N_UPLOAD_LIMIT"
+  info "Nextcloud ${N_MAJOR} | адрес: $(_n_url) | web: 127.0.0.1:$N_HTTP_PORT | БД: $N_DB_IMAGE | загрузка до $N_UPLOAD_LIMIT"
   _n_write_env
   _n_write_compose
   _n_compose config -q || die "docker compose config не прошёл."
@@ -259,9 +265,9 @@ nextcloud_install() {
   _n_wait_ready
   _n_post_setup
 
-  domain_ensure "$N_DOMAIN" nextcloud "http://127.0.0.1:${N_HTTP_PORT}"
+  domain_ensure "$N_DOMAIN" nextcloud "http://127.0.0.1:${N_HTTP_PORT}" "$N_PORT"
 
-  log "Nextcloud готов: https://${N_DOMAIN}$([[ "$PUBLIC_PORT" != 443 ]] && echo ":$PUBLIC_PORT")"
+  log "Nextcloud готов: $(_n_url)"
   if (( ! reinstall )); then
     printf '   Администратор: %s%s%s   Пароль: %s%s%s\n' "$C_BOLD" "$N_ADMIN" "$C_RESET" "$C_BOLD" "$(_n_env_get NEXTCLOUD_ADMIN_PASSWORD)" "$C_RESET"
     info "Пароль также сохранён в $N_ENV (доступен только root). Сменить: selfsteal-apps app nextcloud user passwd $N_ADMIN"
@@ -308,7 +314,7 @@ nextcloud_status() {
   nextcloud_installed || { info "Nextcloud не установлен. Установить: selfsteal-apps app nextcloud install"; return 0; }
   _n_load
   title "Nextcloud"
-  printf ' Домен:   https://%s\n' "$N_DOMAIN"
+  printf ' Адрес:   %s\n' "$(_n_url)"
   local body ver
   body="$(curl -fsS --max-time 3 -H "Host: ${N_DOMAIN}" "http://127.0.0.1:${N_HTTP_PORT}/status.php" 2>/dev/null || true)"
   ver="$(sed -n 's/.*"versionstring":"\([^"]*\)".*/\1/p' <<<"$body")"
@@ -324,7 +330,7 @@ nextcloud_status() {
   _n_compose ps --format 'table {{.Service}}\t{{.Status}}' 2>/dev/null || true
 }
 
-nextcloud_brief() { _n_load; printf '%s' "$N_DOMAIN"; }
+nextcloud_brief() { _n_load; _n_url; }
 nextcloud_version() {
   _n_load
   local ver
@@ -401,7 +407,10 @@ nextcloud_cmd() {
 }
 
 nextcloud_menu_extra() {
-  printf '  6) Пользователи: список\n  7) Добавить пользователя\n  8) Сменить пароль\n  9) Удалить пользователя\n'
+  _menu_item 6 👥 "Пользователи: список"
+  _menu_item 7 👤 "Добавить пользователя"
+  _menu_item 8 🔑 "Сменить пароль"
+  _menu_item 9 🚫 "Удалить пользователя"
 }
 
 nextcloud_menu_action() {
