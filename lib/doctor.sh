@@ -97,6 +97,17 @@ our_cron_ok() { ! acme_installed || crontab -l 2>/dev/null | grep -q "$ACME_HOME
 
 # One-line problem summary for the main screen; empty when all is fine.
 doctor_brief() {
+  local sp
+  sp="$(socket_problems | head -1)"
+  if [[ -n "$sp" ]]; then
+    printf 'Xray не может подключиться к nginx: нет сокета %s — нужен перезапуск nginx' "$(cut -f1 <<<"$sp")"; return 0
+  fi
+  local c
+  if is_installed && [[ "$LISTEN_MODE" == socket ]]; then
+    for c in $(xray_containers); do
+      _container_has_shm "$c" || { printf '%s не монтирует /dev/shm — Xray не видит сокеты nginx' "$c"; return 0; }
+    done
+  fi
   local bad ports
   bad="$(nat_classify | awk -F'\t' '$1 == "bad" { print $4 }' | sort -un | paste -sd, -)"
   if [[ -n "$bad" ]]; then
@@ -194,7 +205,10 @@ doctor_check() {
   else _doc_warn "${C_YELLOW}задание продления selfsteal-apps пропало из cron${C_RESET} (его удаляет установщик DigneZzZ) — восстановить: selfsteal-apps cert renew"
   fi
 
-  is_installed && _doc_links
+  if is_installed; then
+    _doc_sockets "$fixes" || true
+    _doc_links
+  fi
 
   printf '\n %s%sПорты%s\n' "$C_BOLD" "$(ic 🔌)" "$C_RESET"
   if [[ -n "$xp" ]]; then
@@ -215,6 +229,51 @@ _doc_nginx_log() { docker logs --timestamps --since 24h "$CONTAINER" 2>&1 || tru
 
 # "2026-11-18T23:19:59.123Z ..." -> "18.11 23:19"
 _doc_when() { sed -E 's/^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}:[0-9]{2}).*/\3.\2 \4/' <<<"$1"; }
+
+# Sockets between Xray and nginx: present on the host, listened on, visible inside the Xray container.
+# Returns 1 if something is broken.
+_doc_sockets() {
+  [[ "$LISTEN_MODE" == "socket" ]] || return 0
+  local fixes="${1:-0}" hp xp path reason c bad=0
+  hp="$(socket_problems)"; xp="$(xray_socket_problems)"
+  printf '\n %s%sСокеты Xray → nginx%s\n' "$C_BOLD" "$(ic 🔗)" "$C_RESET"
+  if [[ -n "$hp" ]]; then
+    bad=1
+    while IFS=$'\t' read -r path reason; do
+      case "$reason" in
+        gone)    _doc_bad "${C_RED}$path удалён, хотя nginx его слушает${C_RESET} — подключиться к нему нельзя" ;;
+        missing) _doc_bad "${C_RED}$path нет — nginx его не открыл${C_RESET}" ;;
+      esac
+    done <<<"$hp"
+    if (( fixes )) && confirm "Пересоздать контейнер nginx (сокеты создадутся заново, займёт пару секунд)?" y; then
+      restart_cmd && hp="$(socket_problems)" && [[ -z "$hp" ]] && { _doc_ok "сокеты на месте"; bad=0; xp="$(xray_socket_problems)"; }
+    fi
+  else
+    _doc_ok "сокеты на месте: $(socket_paths | paste -sd' ' -)"
+  fi
+  if [[ -z "$(xray_containers)" ]]; then
+    _doc_warn "контейнер Xray (remnanode) не найден — если Xray в Docker, ему нужен том /dev/shm:/dev/shm"
+  elif [[ -z "$xp" ]]; then
+    _doc_ok "Xray ($(xray_containers | paste -sd, -)) видит сокеты"
+  else
+    bad=1
+    local need_shm=0 need_recreate=""
+    while IFS=$'\t' read -r c path reason; do
+      case "$reason" in
+        no-shm)   _doc_bad "${C_RED}$c не монтирует /dev/shm${C_RESET} — видит свой пустой /dev/shm, сокеты ему недоступны"; need_shm=1 ;;
+        not-seen) _doc_bad "${C_RED}$c не видит $path${C_RESET} — том /dev/shm добавлен, но контейнер не пересоздан"; need_recreate="$c" ;;
+      esac
+    done <<<"$xp"
+    if (( fixes )); then
+      if (( need_shm )); then check_xray_socket_access
+      elif [[ -n "$need_recreate" ]] && confirm "Пересоздать $need_recreate? VPN на ноде прервётся на несколько секунд" n; then
+        xray_recreate "$need_recreate"
+      fi
+      [[ -z "$(xray_socket_problems)" ]] && { _doc_ok "Xray видит сокеты"; bad=0; }
+    fi
+  fi
+  return "$bad"
+}
 
 # Per public port: is there an Xray inbound, does it speak proxy protocol, does anything arrive.
 _doc_links() {
@@ -245,9 +304,10 @@ _doc_links() {
     if (( nreq > 0 )); then
       _doc_ok "порт $p: запросов $nreq, последний $(_doc_when "$(tail -1 <<<"$reqs")") ($names)"
     else
-      _doc_warn "порт $p: за сутки ни одного запроса ($names)."
-      printf '      %sОткройте %s в браузере и запустите проверку снова. Если и после этого пусто —\n' "$C_DIM" "$(public_url "${names%%,*}" "$p")"
-      printf '      у inbound на порту %s неверный target, нужен: %s%s\n' "$p" "$(port_target "$p")" "$C_RESET"
+      _doc_warn "порт $p: за сутки до nginx не дошло ни одного запроса ($names)."
+      printf '      %sОткройте %s в браузере и запустите проверку снова. Открылось — всё в порядке, просто не было\n' "$C_DIM" "$(public_url "${names%%,*}" "$p")"
+      printf '      посетителей. Не открылось и здесь пусто — проверьте inbound на порту %s: применён ли он к ноде\n' "$p"
+      printf '      (профиль в Remnawave) и указан ли target %s, "xver": 1.%s\n' "$(port_target "$p")" "$C_RESET"
     fi
   done
 }

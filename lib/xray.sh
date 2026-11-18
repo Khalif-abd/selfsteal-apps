@@ -110,3 +110,29 @@ xray_moved_hint() {
     printf '  • inbound на порту %s: уберите %s из serverNames\n' "$op" "$d"
   fi
 }
+
+# Running Xray containers (remnanode, xray, marzban-node).
+xray_containers() { docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^(remnanode|xray|marzban-node)' || true; }
+
+# Socket problems as seen from Xray containers: "<container>\t<path>\t<reason>"
+#   no-shm   — the container does not mount /dev/shm (sees its own empty one)
+#   not-seen — mounted, but the socket is not visible inside (container created before the mount)
+xray_socket_problems() {
+  [[ "$LISTEN_MODE" == "socket" ]] || return 0
+  local c s
+  for c in $(xray_containers); do
+    if ! _container_has_shm "$c"; then printf '%s\t%s\tno-shm\n' "$c" "$(dirname "$SOCKET_PATH")"; continue; fi
+    while read -r s; do
+      [[ -n "$s" && -S "$s" ]] || continue
+      docker exec "$c" test -S "$s" 2>/dev/null || printf '%s\t%s\tnot-seen\n' "$c" "$s"
+    done < <(socket_paths)
+  done
+}
+
+# Re-create the Xray container from its compose file (applies volumes). Interrupts VPN for a few seconds.
+xray_recreate() {
+  local c="$1" f
+  f="$(_detect_node_compose)" || { warn "Не нашёл docker-compose.yml для $c — пересоздайте его вручную: docker compose up -d --force-recreate"; return 1; }
+  ( cd "$(dirname "$f")" && docker compose up -d --force-recreate ) >/dev/null 2>&1 && log "$c пересоздан." ||
+    { err "Не удалось пересоздать $c."; return 1; }
+}

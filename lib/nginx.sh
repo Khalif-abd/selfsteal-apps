@@ -371,15 +371,22 @@ apply_config() {
     return 1
   fi
   # the container itself must be recreated only when its compose definition changed
-  local compose_changed=0
+  local compose_changed=0 old_socks
   cmp -s "$backup/docker-compose.yml" "$NGINX_DIR/docker-compose.yml" || compose_changed=1
+  old_socks="$(_conf_socket_paths "$backup")"   # sockets the running nginx was configured with
   rm -rf "$backup"
 
   if container_running && [[ "${_SSA_RECREATE:-0}" != "1" ]] && (( ! compose_changed )); then
-    _drop_stale_sockets
+    _drop_stale_sockets "$old_socks"
     if nginx_hup; then
-      _wait_listeners 5 || warn "nginx не открыл часть слушателей — смотрите: selfsteal-apps logs"
-      log "Конфиг nginx перечитан (без перезапуска, соединения не рвутся)."
+      if _wait_listeners 5; then
+        log "Конфиг nginx перечитан (без перезапуска, соединения не рвутся)."
+      else
+        # a socket file is gone while nginx still listens on it: nobody can connect any more,
+        # and a reload never re-creates it. Only a fresh start does.
+        warn "Сокет nginx пропал — Xray не смог бы подключиться. Пересоздаю контейнер nginx."
+        nginx_up
+      fi
     else
       warn "Не удалось послать reload nginx — перезапускаю контейнер."
       nginx_up
@@ -392,14 +399,36 @@ apply_config() {
 # Socket listening right now? (ss sees the nginx container: it runs with network_mode host)
 _sock_listening() { ss -Hxl 2>/dev/null | grep -qF " $1 "; }
 
-# A socket file nobody listens on (crash, removed port) makes nginx fail to bind it on reload.
+# Socket paths a rendered config listens on: _conf_socket_paths NGINX_DIR_COPY
+_conf_socket_paths() {
+  [[ -d "$1/conf.d" ]] || return 0
+  grep -rhoE 'listen[[:space:]]+unix:[^ ;]+' "$1/conf.d" 2>/dev/null | sed -E 's/.*unix://' | sort -u || true
+}
+
+# A socket file nobody listens on (crash, removed port) makes nginx fail to bind it.
+# _drop_stale_sockets [KEEP] — never touches paths listed in KEEP (sockets the running nginx owns).
 _drop_stale_sockets() {
-  local s
+  local keep="${1:-}" s
   while read -r s; do
     [[ -n "$s" && -S "$s" ]] || continue
+    grep -qxF "$s" <<<"$keep" && continue
     _sock_listening "$s" || rm -f "$s"
   done < <(socket_paths)
   return 0
+}
+
+# Problems with the Xray -> nginx sockets, one per line: "<path>\t<reason>".
+#   gone       — nginx listens, but the file is deleted (nobody can connect)
+#   missing    — no file and nobody listens (nginx down / port not opened)
+# _socket_problems — host side only, cheap (main screen, status).
+socket_problems() {
+  [[ "$LISTEN_MODE" == "socket" ]] && is_installed || return 0
+  local s
+  while read -r s; do
+    [[ -n "$s" ]] || continue
+    [[ -S "$s" ]] && continue
+    if _sock_listening "$s"; then printf '%s\tgone\n' "$s"; else printf '%s\tmissing\n' "$s"; fi
+  done < <(socket_paths)
 }
 
 # Wait until every socket listener exists (socket mode). _wait_listeners SECONDS
@@ -425,7 +454,7 @@ nginx_up() {
     sleep 1
   done
   container_running || { compose logs --tail 30 >&2 || true; die "Контейнер $CONTAINER не запустился."; }
-  _wait_listeners 10 || warn "Проверьте логи: selfsteal-apps logs"
+  _wait_listeners 10 || err "nginx запущен, но не открыл сокеты — Xray к нему не подключится. Логи: selfsteal-apps logs"
   log "nginx запущен ($CONTAINER)."
 }
 
