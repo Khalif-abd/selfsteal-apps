@@ -151,6 +151,8 @@ dashboard() {
   is_installed || return 0
   _dash_nginx
   _dash_ip
+  local prob; prob="$(doctor_brief)"
+  [[ -n "$prob" ]] && printf ' %s%s%s%s — «Сервис» → «Диагностика»\n' "$(ic 🚨)" "$C_RED" "$prob" "$C_RESET"
   _dash_domains
   _dash_apps
   _dash_line

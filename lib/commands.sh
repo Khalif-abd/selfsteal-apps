@@ -30,6 +30,7 @@ install_cmd() {
     confirm "Запустить перенос сейчас?" y && { adopt_cmd; return; }
     die "Остановите nginx-selfsteal или выполните adopt."
   fi
+  doctor_preflight
 
   load_config
 
@@ -106,6 +107,8 @@ status_cmd() {
     printf ' Автопродление:  %sне настроено%s\n' "$C_YELLOW" "$C_RESET"
   fi
   ip_status
+  local prob; prob="$(doctor_brief)"
+  [[ -n "$prob" ]] && printf ' %sВнимание:       %s%s — selfsteal-apps doctor\n' "$C_RED" "$prob" "$C_RESET"
   domain_list
   apps_status_brief
 }
@@ -347,5 +350,6 @@ ${C_BOLD}Сервис${C_RESET}
   status | logs [N] | restart | down | xray | version | uninstall
   update                                     обновить скрипт (nginx не трогает)
   nginx version | update                     версия nginx / скачать свежий образ nginx и пересоздать
+  doctor [--fix]                             диагностика: NAT-перенаправления 443, старые задания cron, порты
 EOF
 }

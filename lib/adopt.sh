@@ -55,6 +55,7 @@ adopt_cmd() {
     info "Контент:     шаблон selfsteal -> будет заменён заглушкой nginx (403)"
   fi
   echo
+  doctor_preflight
   warn "Контейнер $OLD_CONTAINER будет остановлен, его файлы останутся в $OLD_DIR (для отката)."
   confirm "Продолжить?" n || return 0
 

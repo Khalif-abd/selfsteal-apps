@@ -16,7 +16,7 @@ if [[ $EUID -ne 0 ]]; then
   echo "Запустите от root." >&2; exit 1
 fi
 
-for _f in common config nginx certs domains xray adopt apps commands dashboard menu; do
+for _f in common config nginx certs domains xray adopt apps commands doctor dashboard menu; do
   # shellcheck disable=SC1090
   source "$SSA_LIB/lib/$_f.sh"
 done
@@ -40,6 +40,7 @@ case "$cmd" in
   logs)                 logs_cmd "$@" ;;
   restart | apply)      restart_cmd ;;
   nginx)                nginx_cmd "$@" ;;
+  doctor | check)       doctor_cmd "$@" ;;
   down | stop)          down_cmd ;;
   xray)                 xray_hint; check_xray_socket_access ;;
   update | update-script) update_cmd ;;

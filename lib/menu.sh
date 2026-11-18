@@ -73,7 +73,8 @@ _menu_service() {
     _menu_item 3 📜 "Логи nginx (Ctrl+C — выход)"
     _menu_item 4 🔌 "Проверить доступ Xray к сокету"
     _menu_item 5 ⛔ "Остановить nginx"
-    _menu_item 6 🎨 "$et"
+    _menu_item 6 🩺 "Диагностика (NAT на 443, старые задания cron, порты)"
+    _menu_item 7 🎨 "$et"
     _menu_item 0 🔙 "Назад"
     local c; _menu_prompt c || return 0
     case "$c" in
@@ -82,7 +83,8 @@ _menu_service() {
       3) ( logs_cmd 100 ) || true ;;
       4) _menu_run check_xray_socket_access ;;
       5) _menu_run down_cmd ;;
-      6) if ui_emoji; then UI_EMOJI=0; else UI_EMOJI=1; fi; save_config ;;
+      6) _menu_run doctor_cmd ;;
+      7) if ui_emoji; then UI_EMOJI=0; else UI_EMOJI=1; fi; save_config ;;
       0|"") return 0 ;;
     esac
   done
