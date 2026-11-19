@@ -101,6 +101,20 @@ detect_public_ip() {
   return 1
 }
 
+# All IPv4 addresses of this server: global addresses on interfaces + the outgoing public one
+# (a server often has several IPs; a domain may point to any of them).
+server_ipv4s() {
+  {
+    ip -4 -o addr show scope global 2>/dev/null | awk '{ sub(/\/.*/, "", $4); print $4 }'
+    [[ -n "${PUBLIC_IP:-}" ]] && printf '%s\n' "$PUBLIC_IP"
+  } | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$' | awk '!seen[$0]++' || true
+}
+
+is_server_ip() { server_ipv4s | grep -qxF "$1"; }
+
+# First A record of DOMAIN that belongs to this server (empty if none).
+domain_server_ip() { local ip; for ip in $(resolve_a "$1"); do is_server_ip "$ip" && { printf '%s' "$ip"; return 0; }; done; return 1; }
+
 # IPv4 addresses a domain resolves to (one per line).
 resolve_a() {
   local d="$1"

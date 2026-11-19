@@ -74,6 +74,30 @@ _menu_certs() {
   done
 }
 
+_menu_logs() {
+  while :; do
+    _menu_header
+    title "$(ic 📜)Логи nginx"
+    _menu_item 1 📡 "В реальном времени — всё"
+    _menu_item 2 🌍 "В реальном времени — один домен или порт"
+    _menu_item 3 🚨 "В реальном времени — только ошибки (и ответы 4xx/5xx)"
+    _menu_item 4 📄 "Последние N строк (один раз)"
+    _menu_item 5 💾 "Сохранить за сутки в файл"
+    _menu_item 0 🔙 "Назад"
+    local c; _menu_prompt c || return 0
+    case "$c" in
+      1) ( logs_cmd 100 ) || true ;;
+      2) local sid=""
+         pick_site sid || continue
+         ( logs_cmd 100 --domain "$(site_domain "$sid")" --port "$(site_port "$sid")" ) || true ;;
+      3) ( logs_cmd 100 --errors ) || true ;;
+      4) local k; ask k "Сколько строк" "200"; ( logs_cmd -n "$k" --no-follow ) || true; pause ;;
+      5) _menu_run logs_cmd --save ;;
+      0|"") return 0 ;;
+    esac
+  done
+}
+
 _menu_service() {
   while :; do
     _menu_header
@@ -82,7 +106,7 @@ _menu_service() {
     local et="Выключить значки в меню"; ui_emoji || et="Включить значки в меню"
     _menu_item 1 🔄 "Перезапустить nginx (пересоздать контейнер)"
     _menu_item 2 🆕 "Обновить nginx (скачать свежий образ)"
-    _menu_item 3 📜 "Логи nginx (Ctrl+C — выход)"
+    _menu_item 3 📜 "Логи nginx (в реальном времени, по домену, ошибки, в файл)"
     _menu_item 4 🔌 "Проверить доступ Xray к сокету"
     _menu_item 5 ⛔ "Остановить nginx"
     _menu_item 6 🩺 "Диагностика (связь с Xray, NAT, cron, порты)"
@@ -92,7 +116,7 @@ _menu_service() {
     case "$c" in
       1) _menu_run restart_cmd ;;
       2) _menu_run nginx_update_cmd ;;
-      3) ( logs_cmd 100 ) || true ;;
+      3) _menu_logs ;;
       4) _menu_run check_xray_socket_access ;;
       5) _menu_run down_cmd ;;
       6) _menu_run doctor_cmd ;;

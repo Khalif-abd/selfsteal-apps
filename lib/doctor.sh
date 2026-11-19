@@ -208,6 +208,7 @@ doctor_check() {
   if is_installed; then
     _doc_sockets "$fixes" || true
     _doc_links
+    _doc_dns
   fi
 
   printf '\n %s%sПорты%s\n' "$C_BOLD" "$(ic 🔌)" "$C_RESET"
@@ -273,6 +274,30 @@ _doc_sockets() {
     fi
   fi
   return "$bad"
+}
+
+# DNS of every domain: points to an IP of this server (main or additional)?
+_doc_dns() {
+  local d ips ip all
+  all="$(server_ipv4s | paste -sd' ' - | sed 's/ /, /g')"
+  printf '\n %s%sDNS%s  %s(IP сервера: %s)%s\n' "$C_BOLD" "$(ic 🌐)" "$C_RESET" "$C_DIM" "${all:-?}" "$C_RESET"
+  for d in $(list_domains); do
+    ips="$(resolve_a "$d" | paste -sd' ' -)"
+    if [[ -z "$ips" ]]; then _doc_bad "${C_RED}$d: нет A-записи${C_RESET}"; continue; fi
+    if ip="$(domain_server_ip "$d")"; then
+      _doc_ok "$d → $ip$([[ "$ip" != "${PUBLIC_IP:-}" ]] && echo " (дополнительный IP сервера)")"
+    else
+      _doc_bad "${C_RED}$d → $ips — это не IP этого сервера${C_RESET}: запросы уходят на другую машину"
+    fi
+  done
+  if app_installed jitsi; then
+    local jip jd
+    jip="$( (_j_load; printf '%s' "$J_PUBLIC_IP") )"; jd="$( (_j_load; printf '%s' "$J_DOMAIN") )"
+    ip="$(domain_server_ip "$jd" || true)"
+    if [[ -n "$ip" && "$ip" != "$jip" ]]; then
+      _doc_warn "${C_YELLOW}Jitsi сообщает клиентам IP $jip, а $jd указывает на $ip${C_RESET} — если видео не идёт: selfsteal-apps app jitsi install --public-ip $ip"
+    fi
+  fi
 }
 
 # Per public port: is there an Xray inbound, does it speak proxy protocol, does anything arrive.

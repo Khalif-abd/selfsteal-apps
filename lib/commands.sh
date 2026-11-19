@@ -172,9 +172,67 @@ ip_status() {
   fi
 }
 
+# logs [N] [-n N] [--no-follow] [--domain D] [--port P] [--errors] [--since 24h] [--save [FILE]]
+#   access lines: '... "host" "request" status ... port=P'; error lines: '[error] ... server: <listen>, host: "d"'
 logs_cmd() {
   is_installed || die "Не установлено."
-  docker logs -f --tail "${1:-200}" "$CONTAINER"
+  local n=200 follow=1 d="" p="" errors=0 since="" save="" re="" ln
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -n|--tail) n="${2:-200}"; shift 2;;
+      --no-follow|--once) follow=0; shift;;
+      -f|--follow) follow=1; shift;;
+      --domain) d="$(lower "${2:-}")"; shift 2;;
+      --port) p="${2:-}"; shift 2;;
+      --errors) errors=1; shift;;
+      --since) since="${2:-}"; shift 2;;
+      --save) if [[ -n "${2:-}" && "${2:-}" != -* ]]; then save="$2"; shift 2; else save="/root/selfsteal-nginx-$(date +%F-%H%M).log"; shift; fi;;
+      [0-9]*) n="$1"; shift;;
+      *) die "logs: неизвестная опция $1";;
+    esac
+  done
+  [[ "$n" =~ ^[0-9]+$ ]] || die "logs: -n — число строк"
+  [[ -z "$p" ]] || valid_public_port "$p" || die "logs: некорректный --port"
+
+  # filter (extended regex); every filter keeps the matching error lines too
+  local filters=()
+  [[ -n "$d" ]] && filters+=("\"${d//./\\.}\"|server: ${d//./\\.}([,]|$)")
+  if [[ -n "$p" ]]; then
+    ln="$(port_listen "$p")"
+    filters+=(" port=${p}\$|server: ${ln//./\\.}([,]|$)")
+  fi
+  (( errors )) && filters+=('\[(warn|error|crit|alert|emerg)\]|"[A-Z]+ [^"]*" [45][0-9][0-9] ')
+
+  local args=() f
+  if [[ -n "$save" ]]; then
+    args+=(--since "${since:-24h}")
+    follow=0
+  else
+    [[ -n "$since" ]] && args+=(--since "$since") || args+=(--tail "$([[ ${#filters[@]} -gt 0 ]] && echo 5000 || echo "$n")")
+    (( follow )) && args+=(-f)
+  fi
+
+  if [[ -n "$save" ]]; then
+    install -d -m 700 "$(dirname "$save")"
+    docker logs "${args[@]}" "$CONTAINER" 2>&1 | _logs_clean | _logs_grep "${filters[@]}" > "$save" || true
+    log "Сохранено: $save ($(wc -l < "$save") строк, $(du -h "$save" | cut -f1))"
+    return 0
+  fi
+  if (( follow )); then
+    info "Логи nginx в реальном времени${d:+ — домен $d}${p:+ — порт $p}$( (( errors )) && echo ' — только ошибки'). Выход: Ctrl+C"
+    docker logs "${args[@]}" "$CONTAINER" 2>&1 | _logs_clean | _logs_grep "${filters[@]}" || true
+  else
+    docker logs "${args[@]}" "$CONTAINER" 2>&1 | _logs_clean | _logs_grep "${filters[@]}" | tail -n "$n" || true
+  fi
+}
+
+# Binary junk (a TLS hello logged as a "broken header") must not turn the log into a "binary file".
+_logs_clean() { LC_ALL=C sed -u 's/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]//g'; }
+# _logs_grep RE... — keep lines matching every RE; line-buffered so a live stream is not delayed.
+_logs_grep() {
+  if (( $# == 0 )); then cat; return; fi
+  local f="$1"; shift
+  grep -a --line-buffered -E -- "$f" | _logs_grep "$@"
 }
 
 restart_cmd() { is_installed || die "Не установлено."; acme_migrate_reloadcmd; _SSA_RECREATE=1 apply_config; }
@@ -356,7 +414,7 @@ ${C_BOLD}Домены${C_RESET}
 
 ${C_BOLD}Приложения${C_RESET}
   app list
-  app jitsi install [--domain D] [--port P] [--auth|--no-auth] [--http-port 8000] [--jvb-port 10000]
+  app jitsi install [--domain D] [--port P] [--public-ip IP] [--auth|--no-auth] [--http-port 8000] [--jvb-port 10000]
   app jitsi status | logs [web|prosody|jicofo|jvb] | update [--force] | port <P> | restart | uninstall
   app jitsi user list | add <имя> [пароль] | passwd <имя> [пароль] | del <имя>
   app nextcloud install [--domain D] [--port P] [--admin NAME] [--http-port 8081]
@@ -376,7 +434,9 @@ ${C_BOLD}Сертификаты${C_RESET}
   cert renew                                 продлить всё, у чего подходит срок
 
 ${C_BOLD}Сервис${C_RESET}
-  status | logs [N] | down | xray | version | uninstall
+  status | down | xray | version | uninstall
+  logs [N] [--domain D] [--port P] [--errors] [--no-follow] [--since 24h] [--save [файл]]
+                                             логи nginx: по умолчанию в реальном времени
   apply                                      пересобрать конфиг и перечитать его без перезапуска nginx
   restart                                    пересобрать конфиг и пересоздать контейнер nginx
   update                                     обновить скрипт (nginx не трогает)

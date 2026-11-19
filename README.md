@@ -99,6 +99,25 @@ sudo selfsteal-apps xray                                                     # t
 - Основной порт меняется только переустановкой без доменов. Установки ≤0.6 переносятся автоматически:
   все домены оказываются на основном порту, настройки Xray менять не нужно.
 
+### Логи nginx
+
+```bash
+sudo selfsteal-apps logs                                   # в реальном времени (Ctrl+C — выход)
+sudo selfsteal-apps logs --domain meet.example.com --port 444
+sudo selfsteal-apps logs --errors                          # ошибки nginx и ответы 4xx/5xx
+sudo selfsteal-apps logs -n 200 --no-follow                # один раз
+sudo selfsteal-apps logs --save                            # за сутки в /root/selfsteal-nginx-<дата>.log
+```
+
+То же в меню: «Сервис» → «Логи nginx». В каждой строке запроса есть `port=` — публичный порт (inbound), через
+который пришёл клиент: если там не тот порт, у inbound неверный `target`.
+
+### Несколько IP на сервере
+
+Домен может указывать на любой IPv4 сервера — основной или дополнительный: проверка DNS перед выпуском
+сертификата, `doctor` и подсказки считают своими все адреса с `ip addr` плюс внешний. Jitsi сообщает клиентам
+тот IP, на который указывает его домен (`--public-ip` — задать вручную).
+
 ### Доступ по IP
 
 ```bash

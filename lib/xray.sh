@@ -67,47 +67,67 @@ check_xray_socket_access() {
   (( found )) || info "Контейнер Xray/remnanode не найден. Если Xray в Docker — смонтируйте /dev/shm:/dev/shm."
 }
 
-# xray_domain_hint DOMAIN [PORT]
-xray_domain_hint() {
-  local d="$1" p="${2:-$PUBLIC_PORT}"
-  printf '\n%sВ Remnawave: inbound на порту %s — добавьте %s в serverNames; его target: %s (xver %s).%s\n' \
-    "$C_DIM" "$p" "$d" "$(port_target "$p")" "$([[ "$PROXY_PROTOCOL" == 1 ]] && echo 1 || echo 0)" "$C_RESET"
+# remnawave_block PORT [DOMAIN] — what must be in the Xray inbound on PORT, plus a checklist.
+remnawave_block() {
+  local p="$1" d="${2:-}" names joined xv bar
+  xv="$([[ "$PROXY_PROTOCOL" == 1 ]] && echo 1 || echo 0)"
+  names="$(list_sites | awk -F@ -v p="$p" '$2 == p { printf "%s\"%s\"", (n++ ? ", " : ""), $1 }')"
+  joined="${names:-\"${d:-your.domain}\"}"
+  bar="${C_YELLOW}│${C_RESET}"
+  printf '\n%s┌ Что сделать в Remnawave — inbound на порту %s%s\n' "$C_YELLOW$C_BOLD" "$p" "$C_RESET"
+  printf '%s %s"realitySettings": {%s\n' "$bar" "$C_BOLD" "$C_RESET"
+  printf '%s   "xver": %s,\n' "$bar" "$xv"
+  printf '%s   "target": "%s%s%s",\n' "$bar" "$C_BOLD" "$(port_target "$p")" "$C_RESET"
+  printf '%s   "serverNames": [%s], ...\n' "$bar" "$joined"
+  printf '%s }\n' "$bar"
+  printf '%s %sПроверьте:%s\n' "$bar" "$C_BOLD" "$C_RESET"
+  printf '%s  • "port" у inbound = %s, "security": "reality"\n' "$bar" "$p"
+  printf '%s  • target ровно %s — у каждого порта свой; чужой target откроет не тот сайт\n' "$bar" "$(port_target "$p")"
+  printf '%s  • "xver": %s — иначе сайт не откроется\n' "$bar" "$xv"
+  [[ -n "$d" ]] && printf '%s  • %s есть в serverNames\n' "$bar" "$d"
+  printf '%s  • inbound включён в профиль, выбранный для этой ноды (Nodes → нода → профиль и inbounds)\n' "$bar"
+  if [[ "$LISTEN_MODE" == socket ]]; then
+    printf '%s  • у remnanode смонтирован /dev/shm:/dev/shm (после добавления — docker compose up -d --force-recreate)\n' "$bar"
+  fi
+  printf '%s  • TCP/%s открыт снаружи (файрвол хостера%s)\n' "$bar" "$p" "$(_ufw_port_note "$p")"
+  if [[ -n "$d" ]]; then
+    local ip; ip="$(domain_server_ip "$d" || true)"
+    if [[ -n "$ip" ]]; then printf '%s  • DNS: %s → %s (IP этого сервера) ✓\n' "$bar" "$d" "$ip"
+    else printf '%s  • DNS: A-запись %s должна указывать на IP этого сервера: %s\n' "$bar" "$d" "$(server_ipv4s | paste -sd' ' - | sed 's/ /, /g')"; fi
+  fi
+  printf '%s└ Проверить потом: selfsteal-apps doctor (меню «Сервис» → «Диагностика»)%s\n' "$C_YELLOW" "$C_RESET"
 }
 
-# One realitySettings block per public port: each Xray inbound points to its own nginx listener.
-xray_hint() {
-  local p names joined n=0
-  title "Настройки Reality inbound (Remnawave → Config Profiles)"
-  for p in $(site_ports); do
-    names="$(list_sites | awk -F@ -v p="$p" '$2 == p { printf "%s\"%s\"", (n++ ? ", " : ""), $1 }')"
-    [[ -n "$names" || "$p" == "$PUBLIC_PORT" ]] || continue
-    n=$((n+1))
-    joined="${names:-\"your.domain\"}"
-    printf '\n%sInbound на порту %s%s%s\n' "$C_BOLD" "$p" "$([[ "$p" == "$PUBLIC_PORT" ]] && echo " (основной)")" "$C_RESET"
-    cat <<EOF
-"realitySettings": {
-  "show": false,
-  "xver": $( [[ "$PROXY_PROTOCOL" == "1" ]] && echo 1 || echo 0 ),
-  "target": "$(port_target "$p")",
-  "serverNames": [${joined}],
-  "privateKey": "...",
-  "shortIds": ["..."]
+# ufw active and the port not allowed -> hint.
+_ufw_port_note() {
+  have ufw || return 0
+  ufw status 2>/dev/null | grep -q '^Status: active' || return 0
+  ufw status 2>/dev/null | grep -qE "^$1(/tcp)?[[:space:]]+ALLOW" && { printf ', ufw: открыт'; return 0; }
+  printf ', ufw: НЕ открыт — ufw allow %s/tcp' "$1"
 }
-EOF
-  done
-  printf '\n%sУ каждого публичного порта свой target: так nginx понимает, на какой порт пришёл клиент.\n' "$C_DIM"
+
+# xray_domain_hint DOMAIN [PORT]
+xray_domain_hint() { remnawave_block "${2:-$PUBLIC_PORT}" "$1"; }
+
+# All inbounds: one block per public port that has domains (and the main one).
+xray_hint() {
+  local p
+  title "Настройки Reality inbound (Remnawave → Config Profiles)"
+  printf '%sУ каждого публичного порта свой target: так nginx понимает, на какой порт пришёл клиент.\n' "$C_DIM"
   printf 'Изменения в панели делаете сами — скрипт её не трогает.%s\n' "$C_RESET"
+  for p in $(site_ports); do
+    [[ -n "$(list_sites | awk -F@ -v p="$p" '$2 == p')" || "$p" == "$PUBLIC_PORT" ]] || continue
+    remnawave_block "$p"
+  done
 }
 
 # xray_moved_hint OLD_SITE NEW_SITE — what to change in Remnawave after a port move.
 xray_moved_hint() {
-  local o="$1" n="$2" d op np
-  d="$(site_domain "$n")"; op="$(site_port "$o")"; np="$(site_port "$n")"
-  printf '\n%sВ Remnawave:%s\n' "$C_BOLD" "$C_RESET"
-  printf '  • inbound на порту %s: добавьте %s в serverNames; target: %s (xver %s)\n' \
-    "$np" "$d" "$(port_target "$np")" "$([[ "$PROXY_PROTOCOL" == 1 ]] && echo 1 || echo 0)"
+  local o="$1" n="$2" d op
+  d="$(site_domain "$n")"; op="$(site_port "$o")"
+  remnawave_block "$(site_port "$n")" "$d"
   if [[ -z "$(list_sites | awk -F@ -v d="$d" -v p="$op" '$1 == d && $2 == p')" ]]; then
-    printf '  • inbound на порту %s: уберите %s из serverNames\n' "$op" "$d"
+    printf '%s  И в inbound на порту %s уберите %s из serverNames.%s\n' "$C_YELLOW" "$op" "$d" "$C_RESET"
   fi
 }
 

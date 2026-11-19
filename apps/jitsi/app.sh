@@ -226,11 +226,12 @@ _j_stop_old() {
   log "selfsteal-jitsi остановлен (файлы в $OLD_SJ_DIR и $OLD_SJ_CFG оставлены)."
 }
 
-# jitsi install [--domain D] [--port P] [--auth|--no-auth] [--http-port P] [--jvb-port P] [--tag stable-XXXX] [--no-migrate]
+# jitsi install [--domain D] [--port P] [--public-ip IP] [--auth|--no-auth] [--http-port P] [--jvb-port P] [--tag stable-XXXX] [--no-migrate]
 jitsi_install() {
-  local tag="" no_migrate=0 d_arg="" auth_arg="" http_arg="" jvb_arg="" port_arg=""
+  local tag="" no_migrate=0 d_arg="" auth_arg="" http_arg="" jvb_arg="" port_arg="" ip_arg=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --public-ip) ip_arg="${2:-}"; valid_ipv4 "$ip_arg" || die "--public-ip: нужен IPv4"; shift 2;;
       --domain) d_arg="${2:-}"; shift 2;;
       --port) port_arg="${2:-}"; shift 2;;
       --auth) auth_arg=1; shift;;
@@ -282,6 +283,9 @@ jitsi_install() {
     die "127.0.0.1:$J_HTTP_PORT занят ($(port_owner_tcp "$J_HTTP_PORT")). Укажите --http-port."
   fi
 
+  # media (JVB) must be advertised on the IP the domain points to — a server may have several
+  [[ -n "$ip_arg" ]] && J_PUBLIC_IP="$ip_arg"
+  if [[ -z "$J_PUBLIC_IP" ]]; then J_PUBLIC_IP="$(domain_server_ip "$J_DOMAIN" || true)"; fi
   J_PUBLIC_IP="${J_PUBLIC_IP:-${PUBLIC_IP:-$(detect_public_ip || true)}}"
   valid_ipv4 "$J_PUBLIC_IP" || ask J_PUBLIC_IP "Публичный IPv4 сервера (для JVB)" ""
   valid_ipv4 "$J_PUBLIC_IP" || die "Нужен публичный IPv4."

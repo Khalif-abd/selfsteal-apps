@@ -183,19 +183,24 @@ _acme_selfcheck() {
   [[ "$body" == "$token" ]]
 }
 
+# OK when an A record points to any IPv4 of this server (main or additional).
 check_dns() {
-  local d="$1" ips
+  local d="$1" ips ip
   [[ -n "$PUBLIC_IP" ]] || PUBLIC_IP="$(detect_public_ip || true)"
   ips="$(resolve_a "$d")"
   if [[ -z "$ips" ]]; then
     warn "$d не резолвится (нет A-записи)."
     return 1
   fi
-  if [[ -n "$PUBLIC_IP" ]] && ! grep -qx "$PUBLIC_IP" <<<"$ips"; then
-    warn "$d указывает на $(tr '\n' ' ' <<<"$ips")— а IP сервера $PUBLIC_IP."
-    return 1
+  if ip="$(domain_server_ip "$d")"; then
+    log "DNS: $d -> $ip$([[ "$ip" != "$PUBLIC_IP" ]] && echo " (дополнительный IP сервера)")"
+    return 0
   fi
-  log "DNS: $d -> $PUBLIC_IP"
+  if [[ -z "$(server_ipv4s)" ]]; then
+    warn "Не удалось узнать IP сервера — пропускаю проверку DNS."; return 0
+  fi
+  warn "$d указывает на $(tr '\n' ' ' <<<"$ips")— это не IP этого сервера ($(server_ipv4s | paste -sd' ' -))."
+  return 1
 }
 
 # Copies an issued cert into the store; acme.sh repeats this on every renewal.
